@@ -1,2 +1,4 @@
-venv/
-.env
+venv/ 
+.env 
+evoting_system.log 
+.history/ 
