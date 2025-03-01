@@ -7,6 +7,11 @@ import pandas as pd
 import plotly.express as px
 import pyotp
 import time
+import os
+import secrets
+import smtplib
+from email.message import EmailMessage
+import re
 import secrets
 import smtplib
 import json
@@ -18,22 +23,20 @@ from flask import Flask, render_template_string, request, redirect, url_for, ses
 import openai
 
 # Load environment variables and set up Flask
-load_dotenv("file1.env")
+load_dotenv("file1.env")  
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
 
-# File for chatbot conversation history
+# File for chatbot conversation history file
 CHAT_HISTORY_FILE = "chat_history.json"
 
 # Set Up Logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s %(levelname)s %(message)s',
-    filename='evoting_system.log',
-    filemode='a'
-)
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s %(levelname)s %(message)s',
+                    filename='evoting_system.log',
+                    filemode='a')
 
-# Blockchain and audit_log simulation
+# Blockchain and audit_log simulation part 
 blockchain = []
 audit_logs = []
 
@@ -42,7 +45,7 @@ def get_db_connection():
     try:
         connection = mysql.connector.connect(
             host=os.getenv("MYSQL_HOST"),
-            port=int(os.getenv("MYSQL_PORT", "3306")),
+            port=int(os.getenv("MYSQL_PORT", "3306")),  # Default to 3306 if MYSQL_PORT is not set
             user=os.getenv("MYSQL_USER"),
             password=os.getenv("MYSQL_PASSWORD"),
             database=os.getenv("MYSQL_DATABASE")
@@ -52,16 +55,37 @@ def get_db_connection():
         logging.error(f"Database connection error: {err}")
         return None
 
-# OTP Generator
+# # OTP Generator
+# def generate_otp(length: int = 6) -> str:
+#     return ''.join(str(secrets.randbelow(10)) for _ in range(length))
+
+# # Send OTP to the users email
+# #def send_otp_email(receiver_email, otp):
+# #   sender_email = os.getenv("EMAIL_USER")
+# #   sender_password = os.getenv("EMAIL_PASSWORD")
+    
+# #   msg = EmailMessage()
+# #   msg["Subject"] = "Your OTP for Voter Registration"
+# #   msg["From"] = sender_email
+# #   msg["To"] = receiver_email
+# #   msg.set_content(f"Your OTP for voter registration is: {otp}")
+    
+# #   try:
+# #       with smtplib.SMTP("smtp.gmail.com", 587) as server:
+# #           server.starttls()
+# #           server.login(sender_email, sender_password)
+# #           server.send_message(msg)
+# #       return True
+# #   except Exception as e:
+# #       print(f"Email sending failed: {e}")
+# #       return False
+
 def generate_otp(length: int = 6) -> str:
     return ''.join(str(secrets.randbelow(10)) for _ in range(length))
 
 def is_valid_email(email: str) -> tuple[bool, str]:
     email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    known_domains = {
-        "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", 
-        "icloud.com", "aol.com", "protonmail.com"
-    }
+    known_domains = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "aol.com", "protonmail.com"}
     
     if not re.fullmatch(email_regex, email):
         return False, "Please enter a valid email address"
@@ -96,6 +120,7 @@ def send_otp_email(receiver_email, otp):
     except Exception as e:
         print(f"Email sending failed: {e}")
         return False
+
 
 def ensure_voter_identifier_column():
     conn = get_db_connection()
@@ -270,11 +295,7 @@ def login_voter(username: str, provided_voter_identifier: str, otp_provided=None
                 if otp_provided is None:
                     otp = totp.now()
                     flash(f"Your OTP for login: {otp}", "info")
-                    return {
-                        "otp_pending": True,
-                        "prefilled_username": username,
-                        "prefilled_voter_identifier": provided_voter_identifier
-                    }
+                    return {"otp_pending": True, "prefilled_username": username, "prefilled_voter_identifier": provided_voter_identifier}
                 else:
                     if totp.verify(otp_provided, valid_window=1):
                         flash(f"Login successful! Welcome {username}.", "success")
@@ -570,7 +591,7 @@ def get_candidates():
     return jsonify([])
 
 # ------------------------------------------------------------------------------
-# Base Head for Template
+# Base Head for Templates (including Font Awesome for icons)
 # ------------------------------------------------------------------------------
 base_head = """
 <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
@@ -648,12 +669,12 @@ index_html = """
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>E-Voting System</title>
+  <title> E - Voting System </title>
   {{ base_head|safe }}
 </head>
 <body>
   <div class="container text-center mt-5 animate__animated animate__fadeInDown">
-    <h1>E‐Voting System</h1>
+    <h1> E‐Voting System</h1>
     {% with messages = get_flashed_messages(with_categories=True) %}
       {% if messages %}
         <div class="mt-3">
@@ -1015,14 +1036,14 @@ def logout():
     return redirect(url_for("index"))
 
 # ------------------------------------------------------------------------------
-# Voter Panel
+# Voter Panel (Modified Voting History)
 # ------------------------------------------------------------------------------
 voter_panel_html = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Voter Panel - E-Voting System</title>
+  <title>Voter Panel - E ‐ Voting System</title>
   {{ base_head|safe }}
 </head>
 <body>
@@ -1192,7 +1213,7 @@ admin_panel_html = """
 <body>
   <div class="container mt-5 animate__animated animate__fadeInUp">
     <h1 class="text-center mb-4">Admin Panel - Election Analysis</h1>
-    {% with messages = get_flashed_messages(with_categories=True) %}
+    {% with messages = get_flashed_messages (with_categories=True) %}
       {% if messages %}
         <div>
           {% for category, message in messages %}
@@ -1409,6 +1430,10 @@ def admin_panel():
                                   states=states,
                                   base_head=base_head)
 
+# ------------------------------------------------------------------------------
+# Chatbot Integration (Advanced using OpenAI API) with Enhanced UI/UX, Voice Assistant,
+# Chat History and New Chat Buttons
+# ------------------------------------------------------------------------------
 chatbot_html = """
 <!doctype html>
 <html lang="en">
@@ -1417,11 +1442,13 @@ chatbot_html = """
   <title>Chatbot - E Voting System</title>
   {{ base_head|safe }}
   <style>
-    body {
+    body 
+	{
       background: linear-gradient(135deg, #1e1e1e, #3a3a3a);
       font-family: 'Roboto', sans-serif;
     }
-    .chat-container {
+    .chat-container 
+	{
       max-width: 700px;
       margin: 40px auto;
       background-color: #1f1f1f;
@@ -1429,14 +1456,16 @@ chatbot_html = """
       box-shadow: 0 4px 8px rgba(0,0,0,0.3);
       padding: 20px;
     }
-    .chat-header {
+    .chat-header 
+	{
       text-align: center;
       margin-bottom: 20px;
       color: #ffcc00;
       font-size: 24px;
       font-weight: bold;
     }
-    .chat-log {
+    .chat-log 
+	{
       height: 400px;
       overflow-y: auto;
       background: #292929;
@@ -1445,40 +1474,48 @@ chatbot_html = """
       margin-bottom: 15px;
       box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
     }
-    .message {
+    .message 
+	{
       margin: 10px 0;
       display: flex;
       align-items: flex-start;
     }
-    .message.bot {
+    .message.bot 
+	{
       justify-content: flex-start;
     }
-    .message.user {
+    .message.user 
+	{
       justify-content: flex-end;
     }
-    .message-content {
+    .message-content 
+	{
       max-width: 80%;
       padding: 10px 15px;
       border-radius: 15px;
       font-size: 16px;
       line-height: 1.4;
     }
-    .message.bot .message-content {
+    .message.bot .message-content 
+	{
       background: #444;
       color: #fff;
       border-top-left-radius: 0;
     }
-    .message.user .message-content {
+    .message.user .message-content 
+	{
       background: #ffcc00;
       color: #000;
       border-top-right-radius: 0;
     }
-    .chat-input-container {
+    .chat-input-container 
+	{
       display: flex;
       gap: 10px;
       align-items: center;
     }
-    .chat-input {
+    .chat-input 
+	{
       flex: 1;
       padding: 12px 15px;
       border: none;
@@ -1486,7 +1523,8 @@ chatbot_html = """
       font-size: 16px;
       outline: none;
     }
-    .chat-send, .chat-record, .chat-history, .chat-new {
+    .chat-send, .chat-record, .chat-history, .chat-new 
+	{
       padding: 12px 15px;
       border: none;
       border-radius: 25px;
@@ -1497,11 +1535,13 @@ chatbot_html = """
       cursor: pointer;
       transition: background 0.3s ease;
     }
-    .chat-send:hover, .chat-record:hover, .chat-history:hover, .chat-new:hover {
+    .chat-send:hover, .chat-record:hover, .chat-history:hover, .chat-new:hover 
+	{
       background: #e6b800;
     }
     /* Modal styles for chat history */
-    .modal {
+    .modal 
+	{
       display: none; 
       position: fixed; 
       z-index: 2000; 
@@ -1512,7 +1552,8 @@ chatbot_html = """
       overflow: auto;
       background-color: rgba(0,0,0,0.8);
     }
-    .modal-content {
+    .modal-content 
+	{
       background-color: #fefefe;
       margin: 10% auto;
       padding: 20px;
@@ -1522,14 +1563,16 @@ chatbot_html = """
       border-radius: 10px;
       color: #000;
     }
-    .close {
+    .close 
+	{
       color: #aaa;
       float: right;
       font-size: 28px;
       font-weight: bold;
     }
     .close:hover,
-    .close:focus {
+    .close:focus 
+	{
       color: black;
       text-decoration: none;
       cursor: pointer;
@@ -1560,7 +1603,8 @@ chatbot_html = """
     <p class="mt-3" style="text-align:center;"><a href="{{ url_for('index') }}">Back to Home</a></p>
   </div>
   <script>
-    function appendMessage(role, text) {
+    function appendMessage(role, text) 
+	{
       var chatLog = document.getElementById("chat-log");
       var messageDiv = document.createElement("div");
       messageDiv.className = "message " + role;
@@ -1587,26 +1631,163 @@ chatbot_html = """
         appendMessage("bot", data.response);
       });
     });
-    document.getElementById("chat-input").addEventListener("keypress", function(e) {
-      if (e.key === "Enter") {
+    document.getElementById("chat-input").addEventListener("keypress", function(e) 
+	{
+      if (e.key === "Enter") 
+	  {
         e.preventDefault();
         document.getElementById("send-btn").click();
       }
     });
-    // Additional code for voice assistant and chat history handling goes here.
+    // Voice Assistant Integration using Web Speech API
+    var recordBtn = document.getElementById("record-btn");
+    var recognition;
+    if ('SpeechRecognition' in window) 
+	{
+      recognition = new SpeechRecognition();
+    } 
+	else if ('webkitSpeechRecognition' in window) 
+	{
+      recognition = new webkitSpeechRecognition();
+    } 
+	else 
+	{
+      recordBtn.disabled = true;
+      recordBtn.innerText = "Voice Not Supported";
+    }
+    if (recognition) 
+	{
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+      recordBtn.addEventListener("click", function() {
+        recognition.start();
+      });
+      recognition.onresult = function(event) 
+	  {
+        var transcript = event.results[0][0].transcript;
+        document.getElementById("chat-input").value = transcript;
+      };
+      recognition.onerror = function(event) 
+	  {
+        console.error("Speech recognition error", event.error);
+      };
+    }
+    // Chat History Button: Fetch and display chat history in a modal
+    var historyBtn = document.getElementById("history-btn");
+    var modal = document.getElementById("chat-history-modal");
+    var modalContent = document.getElementById("chat-history-content");
+    var closeModal = document.getElementById("close-modal");
+    historyBtn.addEventListener("click", function() {
+      fetch("/chat_history")
+        .then(response => response.json())
+        .then(data => {
+          var historyHtml = "";
+          data.forEach(function(item) {
+            historyHtml += "<p><strong>" + item.role.toUpperCase() + ":</strong> " + item.message + " <em>(" + item.timestamp + ")</em></p>";
+          });
+          modalContent.innerHTML = historyHtml;
+          modal.style.display = "block";
+        });
+    });
+    closeModal.addEventListener("click", function() {
+      modal.style.display = "none";
+    });
+    window.addEventListener("click", function(event) {
+      if (event.target == modal) 
+	  {
+        modal.style.display = "none";
+      }
+    });
+    // New Chat Button: Clear the chat log
+    var newChatBtn = document.getElementById("newchat-btn");
+    newChatBtn.addEventListener("click", function() {
+      document.getElementById("chat-log").innerHTML = "";
+    });
   </script>
 </body>
 </html>
 """
 
+def get_chatbot_response(message: str) -> str:
+    """
+    Generate response based on some predefined texts
+    """
+    try:
+        response = openai.ChatCompletion.create(
+           model="gpt-3.5-turbo",
+           messages=[
+               {"role": "system", "content": "You are a highly intelligent assistant for an e-voting system. Provide concise and helpful answers."},
+               {"role": "user", "content": message}
+           ],
+           temperature=0.7,
+           max_tokens=150
+        )
+        return response["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logging.error(f"OpenAI API error: {e}")
+        message = message.lower()
+        if "hi" in message:
+            return "Hi, how can I help you today? \nHere are some few steps to cast your vote to your favourite political party:- \n\t(i) Register Yourself in the Register Panel, \n\t(ii) After registering your Username, Voter ID and with your email a OTP will be sent to your email for registration, \n\t(iii) After Registration, in the Login panel please add your Username and Voter ID and press on the Login button, You will get a OTP on the website screen which when added in the Verify OTP field then you can enter inside your voter panel to cast your vote."
+        if "vote" in message:
+            return "To cast your vote, please go to the voter panel after logging in."
+        elif "register" in message:
+            return "You can register by clicking on the Register link on the home page."
+        elif "results" in message:
+            return "Election results can be viewed on the admin panel (login as admin required)."
+        elif "help" in message:
+            return "How can I assist you? You can ask about voting, registration, or election results."
+        elif "When is the Election Results Date?" in message:
+            return "It will be declared after 1st March 2025."
+        else:
+            return "I'm sorry, I didn't understand that. Can you please rephrase?"
+
+def log_chat_message(role: str, message: str):
+    """JSON conversation history file."""
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, "r") as f:
+                history = json.load(f)
+        else:
+            history = []
+    except Exception as e:
+        logging.error(f"Error reading chat history file: {e}")
+        history = []
+    history.append({
+         "role": role,
+         "message": message,
+         "timestamp": datetime.now().isoformat()
+    })
+    try:
+        with open(CHAT_HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=4)
+    except Exception as e:
+        logging.error(f"Error writing chat history file: {e}")
+
 @app.route("/chat", methods=["GET", "POST"])
 def chat():
     if request.method == "POST":
         data = request.get_json()
-        user_message = data.get("message")
-        bot_response = f"You said: {user_message}"
+        user_message = data.get("message", "")
+        log_chat_message("user", user_message)   # Log user message
+        bot_response = get_chatbot_response(user_message)
+        log_chat_message("bot", bot_response)      # Log bot response
         return jsonify({"response": bot_response})
     return render_template_string(chatbot_html, base_head=base_head)
 
-if __name__ == "__main__":
+@app.route("/chat_history")
+def chat_history():
+    """Return the JSON chat conversation history."""
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, "r") as f:
+                history = json.load(f)
+        else:
+            history = []
+    except Exception as e:
+         logging.error(f"Error reading chat history: {e}")
+         history = []
+    return jsonify(history)
+
+if __name__ == '__main__':
     app.run(debug=True)
