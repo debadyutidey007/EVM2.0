@@ -7,6 +7,12 @@ import pandas as pd
 import plotly.express as px
 import pyotp
 import time
+import os
+import random
+import secrets
+import smtplib
+from email.message import EmailMessage
+import re
 import secrets
 import smtplib
 import json
@@ -18,22 +24,20 @@ from flask import Flask, render_template_string, request, redirect, url_for, ses
 import openai
 
 # Load environment variables and set up Flask
-load_dotenv("file1.env")
+load_dotenv("file1.env")  
 app = Flask(__name__)
 app.secret_key = 'your_secret_key_here'
 
-# File for chatbot conversation history
+# File for chatbot conversation history file
 CHAT_HISTORY_FILE = "chat_history.json"
 
 # Set Up Logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s %(levelname)s %(message)s',
-    filename='evoting_system.log',
-    filemode='a'
-)
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s %(levelname)s %(message)s',
+                    filename='evoting_system.log',
+                    filemode='a')
 
-# Blockchain and audit_log simulation
+# Blockchain and audit_log simulation part 
 blockchain = []
 audit_logs = []
 
@@ -42,7 +46,7 @@ def get_db_connection():
     try:
         connection = mysql.connector.connect(
             host=os.getenv("MYSQL_HOST"),
-            port=int(os.getenv("MYSQL_PORT", "3306")),
+            port=int(os.getenv("MYSQL_PORT", "3306")),  # Default to 3306 if MYSQL_PORT is not set
             user=os.getenv("MYSQL_USER"),
             password=os.getenv("MYSQL_PASSWORD"),
             database=os.getenv("MYSQL_DATABASE")
@@ -52,16 +56,37 @@ def get_db_connection():
         logging.error(f"Database connection error: {err}")
         return None
 
-# OTP Generator
+# # OTP Generator
+# def generate_otp(length: int = 6) -> str:
+#     return ''.join(str(secrets.randbelow(10)) for _ in range(length))
+
+# # Send OTP to the users email
+# #def send_otp_email(receiver_email, otp):
+# #   sender_email = os.getenv("EMAIL_USER")
+# #   sender_password = os.getenv("EMAIL_PASSWORD")
+    
+# #   msg = EmailMessage()
+# #   msg["Subject"] = "Your OTP for Voter Registration"
+# #   msg["From"] = sender_email
+# #   msg["To"] = receiver_email
+# #   msg.set_content(f"Your OTP for voter registration is: {otp}")
+    
+# #   try:
+# #       with smtplib.SMTP("smtp.gmail.com", 587) as server:
+# #           server.starttls()
+# #           server.login(sender_email, sender_password)
+# #           server.send_message(msg)
+# #       return True
+# #   except Exception as e:
+# #       print(f"Email sending failed: {e}")
+# #       return False
+
 def generate_otp(length: int = 6) -> str:
     return ''.join(str(secrets.randbelow(10)) for _ in range(length))
 
 def is_valid_email(email: str) -> tuple[bool, str]:
     email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    known_domains = {
-        "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", 
-        "icloud.com", "aol.com", "protonmail.com"
-    }
+    known_domains = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "aol.com", "protonmail.com"}
     
     if not re.fullmatch(email_regex, email):
         return False, "Please enter a valid email address"
@@ -96,6 +121,7 @@ def send_otp_email(receiver_email, otp):
     except Exception as e:
         print(f"Email sending failed: {e}")
         return False
+
 
 def ensure_voter_identifier_column():
     conn = get_db_connection()
@@ -270,11 +296,7 @@ def login_voter(username: str, provided_voter_identifier: str, otp_provided=None
                 if otp_provided is None:
                     otp = totp.now()
                     flash(f"Your OTP for login: {otp}", "info")
-                    return {
-                        "otp_pending": True,
-                        "prefilled_username": username,
-                        "prefilled_voter_identifier": provided_voter_identifier
-                    }
+                    return {"otp_pending": True, "prefilled_username": username, "prefilled_voter_identifier": provided_voter_identifier}
                 else:
                     if totp.verify(otp_provided, valid_window=1):
                         flash(f"Login successful! Welcome {username}.", "success")
@@ -570,7 +592,7 @@ def get_candidates():
     return jsonify([])
 
 # ------------------------------------------------------------------------------
-# Base Head for Template
+# Base Head for Templates (including Font Awesome for icons)
 # ------------------------------------------------------------------------------
 base_head = """
 <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
@@ -648,12 +670,37 @@ index_html = """
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>E-Voting System</title>
+  <title> E - Voting System </title>
   {{ base_head|safe }}
+  <style>
+    body {
+      background: linear-gradient(45deg, #141E30, #243B55, #141E30);
+      background-size: 400% 400%;
+      animation: gradientBG 15s ease infinite;
+    }
+    @keyframes gradientBG {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    /* Custom Cursor Animation using an image */
+    .tricolor-follow {
+      position: fixed;
+      pointer-events: none;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: url('cursor.png') no-repeat center center;
+      background-size: cover;
+      transform: translate(-50%, -50%);
+      z-index: 9999;
+      opacity: 0.8;
+    }
+  </style>
 </head>
 <body>
   <div class="container text-center mt-5 animate__animated animate__fadeInDown">
-    <h1>E‐Voting System</h1>
+    <h1> E‐Voting System</h1>
     {% with messages = get_flashed_messages(with_categories=True) %}
       {% if messages %}
         <div class="mt-3">
@@ -672,6 +719,34 @@ index_html = """
   </div>
   <!-- Floating Chat Icon -->
   <a href="{{ url_for('chat') }}" class="floating-chat-icon"><i class="fas fa-comment"></i></a>
+  <!-- Custom Image Cursor Script with Interactive and Leave-Window Checks -->
+  <script>
+    const customCursor = document.createElement('div');
+    customCursor.className = 'tricolor-follow';
+    document.body.appendChild(customCursor);
+    
+    document.addEventListener('mousemove', function(e) {
+      const interactiveTags = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
+      // Hide when hovering interactive elements or the chatbot button.
+      if (
+          interactiveTags.includes(e.target.tagName) ||
+          (e.target.closest && e.target.closest('.floating-chat-icon'))
+      ) {
+        customCursor.style.display = 'none';
+      } else {
+        customCursor.style.display = 'block';
+        customCursor.style.left = e.clientX + 'px';
+        customCursor.style.top = e.clientY + 'px';
+      }
+    });
+    
+    window.addEventListener('mouseout', function(e) {
+      if (e.clientX <= 0 || e.clientY <= 0 ||
+          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        customCursor.style.display = 'none';
+      }
+    });
+  </script>
 </body>
 </html>
 """
@@ -695,6 +770,31 @@ register_html = """
   <meta charset="UTF-8">
   <title>Register - E‐Voting System</title>
   {{ base_head|safe }}
+  <style>
+    body {
+      background: linear-gradient(45deg, #141E30, #243B55, #141E30);
+      background-size: 400% 400%;
+      animation: gradientBG 15s ease infinite;
+    }
+    @keyframes gradientBG {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    /* Custom Cursor Animation using an image */
+    .tricolor-follow {
+      position: fixed;
+      pointer-events: none;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: url('cursor.png') no-repeat center center;
+      background-size: cover;
+      transform: translate(-50%, -50%);
+      z-index: 9999;
+      opacity: 0.8;
+    }
+  </style>
 </head>
 <body>
   <div class="container mt-5">
@@ -795,6 +895,28 @@ register_html = """
       </div>
     </div>
   </div>
+  <!-- Custom Image Cursor Script with Interactive and Leave-Window Checks -->
+  <script>
+    const customCursor = document.createElement('div');
+    customCursor.className = 'tricolor-follow';
+    document.body.appendChild(customCursor);
+    document.addEventListener('mousemove', function(e) {
+      const interactiveTags = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
+      if (interactiveTags.includes(e.target.tagName)) {
+        customCursor.style.display = 'none';
+      } else {
+        customCursor.style.display = 'block';
+        customCursor.style.left = e.clientX + 'px';
+        customCursor.style.top = e.clientY + 'px';
+      }
+    });
+    window.addEventListener('mouseout', function(e) {
+      if (e.clientX <= 0 || e.clientY <= 0 ||
+          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        customCursor.style.display = 'none';
+      }
+    });
+  </script>
 </body>
 </html>
 """
@@ -877,6 +999,33 @@ login_html = """
   <meta charset="UTF-8">
   <title>Login - E‐Voting System</title>
   {{ base_head|safe }}
+  <style>
+    body {
+      background: linear-gradient(45deg, #141E30, #243B55, #141E30);
+      background-size: 400% 400%;
+      animation: gradientBG 15s ease infinite;
+    }
+    @keyframes gradientBG 
+    {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    /* Custom Cursor Animation using an image */
+    .tricolor-follow 
+    {
+      position: fixed;
+      pointer-events: none;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: url('cursor.png') no-repeat center center;
+      background-size: cover;
+      transform: translate(-50%, -50%);
+      z-index: 9999;
+      opacity: 0.8;
+    }
+  </style>
 </head>
 <body>
   <div class="container mt-5">
@@ -935,23 +1084,60 @@ login_html = """
       </div>
     </div>
   </div>
+  <!-- Custom Image Cursor Script with Interactive and Leave-Window Checks -->
   <script>
-    function toggleLoginFields() {
+    const customCursor = document.createElement('div');
+    customCursor.className = 'tricolor-follow';
+    document.body.appendChild(customCursor);
+    document.addEventListener('mousemove', function(e) 
+    {
+      const interactiveTags = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
+      if (interactiveTags.includes(e.target.tagName)) 
+      {
+        customCursor.style.display = 'none';
+      } 
+      else 
+      {
+        customCursor.style.display = 'block';
+        customCursor.style.left = e.clientX + 'px';
+        customCursor.style.top = e.clientY + 'px';
+      }
+    });
+    window.addEventListener('mouseout', function(e) 
+    {
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) 
+      {
+        customCursor.style.display = 'none';
+      }
+    });
+  </script>
+  <script>
+    function toggleLoginFields() 
+    {
       const loginSelect = document.getElementById('login_mode-select');
       const voterLoginFields = document.getElementById('voter_login_fields');
       const adminLoginFields = document.getElementById('admin_login_fields');
       const voterInput = document.querySelector('input[name="voter_identifier"]');
       const passwordInput = document.querySelector('input[name="password"]');
-      if (loginSelect.value === 'Admin') {
+      if (loginSelect.value === 'Admin') 
+      {
         voterLoginFields.style.display = 'none';
         adminLoginFields.style.display = 'block';
         if(voterInput) { voterInput.removeAttribute('required'); }
         if(passwordInput) { passwordInput.setAttribute('required', 'required'); }
-      } else {
+      } 
+      else 
+      {
         voterLoginFields.style.display = 'block';
         adminLoginFields.style.display = 'none';
-        if(voterInput) { voterInput.setAttribute('required', 'required'); }
-        if(passwordInput) { passwordInput.removeAttribute('required'); }
+        if(voterInput) 
+        { 
+          voterInput.setAttribute('required', 'required'); 
+        }
+        if(passwordInput) 
+        { 
+          passwordInput.removeAttribute('required'); 
+        }
       }
     }
     document.getElementById('login_mode-select').addEventListener('change', toggleLoginFields);
@@ -1015,14 +1201,14 @@ def logout():
     return redirect(url_for("index"))
 
 # ------------------------------------------------------------------------------
-# Voter Panel
+# Voter Panel (Modified Voting History)
 # ------------------------------------------------------------------------------
 voter_panel_html = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Voter Panel - E-Voting System</title>
+  <title>Voter Panel - E ‐ Voting System</title>
   {{ base_head|safe }}
 </head>
 <body>
@@ -1192,7 +1378,7 @@ admin_panel_html = """
 <body>
   <div class="container mt-5 animate__animated animate__fadeInUp">
     <h1 class="text-center mb-4">Admin Panel - Election Analysis</h1>
-    {% with messages = get_flashed_messages(with_categories=True) %}
+    {% with messages = get_flashed_messages (with_categories=True) %}
       {% if messages %}
         <div>
           {% for category, message in messages %}
@@ -1409,46 +1595,64 @@ def admin_panel():
                                   states=states,
                                   base_head=base_head)
 
+# ------------------------------------------------------------------------------
+# Chatbot Integration (Advanced using OpenAI API) with Enhanced UI/UX, Voice Assistant,
+# Chat History, New Chat Buttons, and Clear History functionality
+# ------------------------------------------------------------------------------
 chatbot_html = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Chatbot - E Voting System</title>
+  <title>Chatbot Assistant</title>
   {{ base_head|safe }}
   <style>
+    /* Global Styles */
     body {
-      background: linear-gradient(135deg, #1e1e1e, #3a3a3a);
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
       font-family: 'Roboto', sans-serif;
+      margin: 0;
+      padding: 0;
+      color: #eaeaea;
     }
+    /* Chat Container */
     .chat-container {
-      max-width: 700px;
-      margin: 40px auto;
-      background-color: #1f1f1f;
-      border-radius: 15px;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-      padding: 20px;
-    }
-    .chat-header {
-      text-align: center;
-      margin-bottom: 20px;
-      color: #ffcc00;
-      font-size: 24px;
-      font-weight: bold;
-    }
-    .chat-log {
-      height: 400px;
-      overflow-y: auto;
-      background: #292929;
+      max-width: 800px;
+      margin: 50px auto;
+      background: #0f3460;
       border-radius: 10px;
-      padding: 15px;
-      margin-bottom: 15px;
-      box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+      box-shadow: 0 8px 16px rgba(0,0,0,0.7);
+      overflow: hidden;
+    }
+    /* Header */
+    .chat-header {
+      background: #16213e;
+      padding: 20px;
+      text-align: center;
+      font-size: 28px;
+      font-weight: bold;
+      color: #ffcc00;
+      border-bottom: 3px solid #e94560;
+      letter-spacing: 1px;
+    }
+    /* Chat Log */
+    .chat-log {
+      height: 500px;
+      overflow-y: auto;
+      background: #1a1a2e;
+      padding: 20px;
+      font-size: 16px;
+      line-height: 1.5;
     }
     .message {
-      margin: 10px 0;
+      margin: 12px 0;
       display: flex;
       align-items: flex-start;
+      opacity: 0;
+      animation: messageFadeIn 0.4s forwards;
+    }
+    @keyframes messageFadeIn {
+      to { opacity: 1; }
     }
     .message.bot {
       justify-content: flex-start;
@@ -1457,107 +1661,141 @@ chatbot_html = """
       justify-content: flex-end;
     }
     .message-content {
-      max-width: 80%;
-      padding: 10px 15px;
-      border-radius: 15px;
-      font-size: 16px;
-      line-height: 1.4;
+      max-width: 70%;
+      padding: 12px 18px;
+      border-radius: 8px;
+      background: #333;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.5);
     }
     .message.bot .message-content {
-      background: #444;
-      color: #fff;
+      background: #0f3460;
+      color: #ffcc00;
       border-top-left-radius: 0;
     }
     .message.user .message-content {
       background: #ffcc00;
-      color: #000;
+      color: #0f3460;
       border-top-right-radius: 0;
     }
+    /* Input Area */
     .chat-input-container {
       display: flex;
-      gap: 10px;
-      align-items: center;
+      padding: 20px;
+      background: #16213e;
     }
     .chat-input {
       flex: 1;
-      padding: 12px 15px;
+      padding: 12px 16px;
       border: none;
-      border-radius: 25px;
+      border-radius: 4px;
       font-size: 16px;
       outline: none;
     }
     .chat-send, .chat-record, .chat-history, .chat-new {
-      padding: 12px 15px;
+      margin-left: 10px;
+      padding: 12px 20px;
       border: none;
-      border-radius: 25px;
-      background: #ffcc00;
-      color: #000;
+      border-radius: 4px;
+      background: #e94560;
+      color: #fff;
       font-size: 16px;
-      font-weight: bold;
       cursor: pointer;
       transition: background 0.3s ease;
     }
     .chat-send:hover, .chat-record:hover, .chat-history:hover, .chat-new:hover {
-      background: #e6b800;
+      background: #d73750;
     }
-    /* Modal styles for chat history */
+    /* Modal for Chat History */
     .modal {
-      display: none; 
-      position: fixed; 
-      z-index: 2000; 
+      display: none;
+      position: fixed;
+      z-index: 3000;
       left: 0;
       top: 0;
       width: 100%;
       height: 100%;
-      overflow: auto;
-      background-color: rgba(0,0,0,0.8);
+      background: rgba(0,0,0,0.8);
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .modal.show {
+      opacity: 1;
     }
     .modal-content {
-      background-color: #fefefe;
-      margin: 10% auto;
-      padding: 20px;
-      border: 1px solid #888;
+      background: #1a1a2e;
+      padding: 30px;
+      border-radius: 8px;
       width: 80%;
       max-width: 600px;
-      border-radius: 10px;
-      color: #000;
+      color: #ffcc00;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.7);
+      position: relative;
+      animation: modalSlideIn 0.5s ease-out;
+    }
+    @keyframes modalSlideIn {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    /* Make the Chat History header sticky so it stays visible when scrolling */
+    .modal-content h3 {
+      position: sticky;
+      top: 0;
+      background: #1a1a2e;
+      padding: 10px;
+      margin: 0;
+      z-index: 2;
+      border-bottom: 1px solid #e94560;
+    }
+    .modal-content p {
+      margin: 10px 0;
+      transition: transform 0.3s ease;
+    }
+    .modal-content p:hover {
+      transform: scale(1.02);
     }
     .close {
-      color: #aaa;
-      float: right;
+      position: absolute;
+      top: 10px;
+      right: 15px;
       font-size: 28px;
-      font-weight: bold;
-    }
-    .close:hover,
-    .close:focus {
-      color: black;
-      text-decoration: none;
       cursor: pointer;
+      color: #e94560;
+    }
+    .close:hover {
+      color: #d73750;
     }
   </style>
 </head>
 <body>
-  <div class="container chat-container">
-    <h2 class="chat-header">Intelligent Chatbot Assistant</h2>
+  <div class="chat-container">
+    <div class="chat-header">Government Chatbot Assistant</div>
     <div id="chat-log" class="chat-log"></div>
     <div class="chat-input-container">
       <input type="text" id="chat-input" class="chat-input" placeholder="Type your message here..." />
       <button id="send-btn" class="chat-send">Send</button>
       <button id="record-btn" class="chat-record"><i class="fas fa-microphone"></i></button>
     </div>
-    <div class="chat-input-container" style="margin-top:10px;">
+    <div class="chat-input-container" style="justify-content: flex-end; margin-top: 10px;">
       <button id="history-btn" class="chat-history"><i class="fas fa-history"></i> History</button>
       <button id="newchat-btn" class="chat-new"><i class="fas fa-plus-circle"></i> New Chat</button>
     </div>
-    <!-- Modal for chat history -->
+    <!-- Modal for Chat History -->
     <div id="chat-history-modal" class="modal">
       <div class="modal-content">
         <span id="close-modal" class="close">&times;</span>
         <h3>Chat History</h3>
+        <!-- Clear History Button -->
+        <div id="chat-history-controls" style="margin-bottom: 10px;">
+          <button id="clear-history-btn" class="btn btn-danger">Clear History</button>
+        </div>
         <div id="chat-history-content"></div>
       </div>
     </div>
-    <p class="mt-3" style="text-align:center;"><a href="{{ url_for('index') }}">Back to Home</a></p>
+    <p style="text-align:center; margin: 20px 0;">
+      <a href="{{ url_for('index') }}" style="color: #e94560; text-decoration: none;">Back to Home</a>
+    </p>
   </div>
   <script>
     function appendMessage(role, text) {
@@ -1593,20 +1831,241 @@ chatbot_html = """
         document.getElementById("send-btn").click();
       }
     });
-    // Additional code for voice assistant and chat history handling goes here.
+    // Voice Assistant Integration using Web Speech API
+    var recordBtn = document.getElementById("record-btn");
+    var recognition;
+    if ('SpeechRecognition' in window) {
+      recognition = new SpeechRecognition();
+    } else if ('webkitSpeechRecognition' in window) {
+      recognition = new webkitSpeechRecognition();
+    } else {
+      recordBtn.disabled = true;
+      recordBtn.innerText = "Voice Not Supported";
+    }
+    if (recognition) {
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+      recordBtn.addEventListener("click", function() {
+        recognition.start();
+      });
+      recognition.onresult = function(event) {
+        var transcript = event.results[0][0].transcript;
+        document.getElementById("chat-input").value = transcript;
+      };
+      recognition.onerror = function(event) {
+        console.error("Speech recognition error", event.error);
+      };
+    }
+    // Chat History Modal with Animation
+    var historyBtn = document.getElementById("history-btn");
+    var modal = document.getElementById("chat-history-modal");
+    var modalContent = document.getElementById("chat-history-content");
+    var closeModal = document.getElementById("close-modal");
+    historyBtn.addEventListener("click", function() {
+      fetch("/chat_history")
+      .then(response => response.json())
+      .then(data => {
+        var historyHtml = "";
+        data.forEach(function(item) {
+          historyHtml += "<p><strong>" + item.role.toUpperCase() + ":</strong> " + item.message + " <em>(" + item.timestamp + ")</em></p>";
+        });
+        modalContent.innerHTML = historyHtml;
+        modal.classList.add("show");
+        modal.style.display = "flex";
+      });
+    });
+    closeModal.addEventListener("click", function() {
+      modal.classList.remove("show");
+      setTimeout(function() {
+        modal.style.display = "none";
+      }, 300);
+    });
+    window.addEventListener("click", function(event) {
+      if (event.target == modal) {
+        modal.classList.remove("show");
+        setTimeout(function() {
+          modal.style.display = "none";
+        }, 300);
+      }
+    });
+    // New Chat Button: Clear the chat log
+    var newChatBtn = document.getElementById("newchat-btn");
+    newChatBtn.addEventListener("click", function() {
+      document.getElementById("chat-log").innerHTML = "";
+    });
+    // Clear History Button: Send request to clear chat history
+    document.getElementById("clear-history-btn").addEventListener("click", function() {
+      fetch("/clear_chat_history", { method: "POST" })
+        .then(response => response.json())
+        .then(data => {
+          if(data.success) {
+            document.getElementById("chat-history-content").innerHTML = "<p>Chat history cleared.</p>";
+          } else {
+            alert("Failed to clear chat history.");
+          }
+        });
+    });
   </script>
 </body>
 </html>
 """
 
+def get_chatbot_response(message: str) -> str:
+    lower_message = message.lower()
+    # New branch: if user asks for winning details including vote counts and specifies an area
+    if "winning" in lower_message and ("by how many votes" in lower_message or "how many votes" in lower_message):
+         import re  # Ensure regex is available
+         # Try to extract area details
+         constituency_match = re.search(r"constituency\s+([\w\s]+)", lower_message)
+         region_match = re.search(r"region\s+([\w\s]+)", lower_message)
+         state_match = re.search(r"state\s+([\w\s]+)", lower_message)
+         
+         if constituency_match:
+              constituency_name = constituency_match.group(1).strip()
+              # For demonstration, assume a dummy lookup: replace with proper lookup as needed.
+              constituency_id = 1  
+              results = get_vote_count_by_constituency(constituency_id)
+              if results:
+                  summary = "Vote counts for constituency '{}':\n".format(constituency_name)
+                  for item in results:
+                      summary += "{} ({}): {} votes\n".format(item["candidate_name"], item["party"], item["vote_count"])
+                  summary += "\nWinning candidate: " + get_winner(results)
+                  return summary
+              else:
+                  return "No voting data found for constituency '{}'.".format(constituency_name)
+         elif region_match:
+              region_name = region_match.group(1).strip()
+              # For demonstration, assume a dummy region ID; implement proper lookup as needed.
+              region_id = 1  
+              results = get_vote_count_by_region(region_id)
+              if results:
+                  summary = "Vote counts for region '{}':\n".format(region_name)
+                  for item in results:
+                      summary += "{} ({}): {} votes\n".format(item["candidate_name"], item["party"], item["vote_count"])
+                  summary += "\nWinning candidate in region: " + get_winner(results)
+                  return summary
+              else:
+                  return "No voting data found for region '{}'.".format(region_name)
+         elif state_match:
+              state_name = state_match.group(1).strip()
+              states = fetch_states()
+              state_id = None
+              for s in states:
+                  if s["state_name"].lower() == state_name:
+                      state_id = s["state_id"]
+                      break
+              if state_id is None:
+                  return "State '{}' not found.".format(state_name)
+              results = get_vote_count_by_state(state_id)
+              if results:
+                  summary = "Vote counts for state '{}':\n".format(state_name)
+                  for item in results:
+                      summary += "{} ({}): {} votes\n".format(item["candidate_name"], item["party"], item["vote_count"])
+                  summary += "\nWinning candidate in state: " + get_winner(results)
+                  return summary
+              else:
+                  return "No voting data found for state '{}'.".format(state_name)
+         else:
+              # Fallback if no specific area is mentioned
+              return ("To get detailed winning candidate information, please specify the state, region, or constituency in your query.")
+    # Existing branch for winning queries without vote counts
+    elif "winning" in lower_message and ("state" in lower_message or "region" in lower_message or "constituency" in lower_message):
+         return (
+             "To see who is currently winning, please check the admin panel. "
+             "There you can select the specific state, region, and constituency to view "
+             "the latest vote counts and determine the leading candidate."
+         )
+    try:
+         response = openai.ChatCompletion.create(
+             model="gpt-3.5-turbo",
+             messages=[
+                 {"role": "system", "content": "You are a highly intelligent assistant for an e-voting system. Provide concise and helpful answers. If a user asks for winning candidate details including vote counts in a specific area, fetch the data from the database and summarize the vote counts and winning margin."},
+                 {"role": "user", "content": message}
+             ],
+             temperature=0.7,
+             max_tokens=150
+         )
+         return response["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+         logging.error(f"OpenAI API error: {e}")
+         message = message.lower()
+         if "hi" in message:
+             return ("Hi, how can I help you today? \n"
+                     "Here are a few steps to cast your vote: \n"
+                     "\t(i) Register on the Register Panel, \n"
+                     "\t(ii) After registering your Username, Voter ID and email, you'll receive an OTP, \n"
+                     "\t(iii) Login using your credentials and verify your OTP to access your voter panel and cast your vote.")
+         if "vote" in message:
+             return "To cast your vote, please go to the voter panel after logging in."
+         elif "register" in message:
+             return "You can register by clicking on the Register link on the home page."
+         elif "results" in message:
+             return "Election results can be viewed on the admin panel (login as admin required)."
+         elif "help" in message:
+             return "How can I assist you? You can ask about voting, registration, or election results."
+         elif "when is the election results date?" in message:
+             return "It will be declared after 1st March 2025."
+         else:
+             return "I'm sorry, I didn't understand that. For further assistance, please call our helpline at 1-800-123-4567."
+
+def log_chat_message(role: str, message: str):
+    """JSON conversation history file."""
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, "r") as f:
+                history = json.load(f)
+        else:
+            history = []
+    except Exception as e:
+        logging.error(f"Error reading chat history file: {e}")
+        history = []
+    history.append({
+         "role": role,
+         "message": message,
+         "timestamp": datetime.now().isoformat()
+    })
+    try:
+        with open(CHAT_HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=4)
+    except Exception as e:
+        logging.error(f"Error writing chat history file: {e}")
+
 @app.route("/chat", methods=["GET", "POST"])
 def chat():
     if request.method == "POST":
         data = request.get_json()
-        user_message = data.get("message")
-        bot_response = f"You said: {user_message}"
+        user_message = data.get("message", "")
+        log_chat_message("user", user_message)   # Log user message
+        bot_response = get_chatbot_response(user_message)
+        log_chat_message("bot", bot_response)      # Log bot response
         return jsonify({"response": bot_response})
     return render_template_string(chatbot_html, base_head=base_head)
+    
+@app.route("/chat_history")
+def chat_history():
+    """Return the JSON chat conversation history."""
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, "r") as f:
+                history = json.load(f)
+        else:
+            history = []
+    except Exception as e:
+         logging.error(f"Error reading chat history: {e}")
+         history = []
+    return jsonify(history)
 
-if __name__ == "__main__":
+@app.route("/clear_chat_history", methods=["POST"])
+def clear_chat_history():
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, "w") as f:
+                json.dump([], f)
+        return jsonify({"success": True, "message": "Chat history cleared."})
+    except Exception as e:
+        logging.error(f"Error clearing chat history: {e}")
+        return jsonify({"success": False, "message": "Failed to clear chat history."})
+
+if __name__ == '__main__':
     app.run(debug=True)
