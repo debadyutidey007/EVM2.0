@@ -1,3 +1,8 @@
+try:
+    import tf_keras
+except ImportError as e:
+    raise ImportError("tf-keras package is required for DeepFace. Please run 'pip install tf-keras' or downgrade your tensorflow version.") from e
+
 import os
 import re
 import logging
@@ -7,7 +12,6 @@ import pandas as pd
 import plotly.express as px
 import pyotp
 import time
-import os
 import random
 import secrets
 import smtplib
@@ -16,9 +20,9 @@ import re
 import numpy as np
 import base64
 import secrets
-import smtplib
 import json
 import face_recognition
+from deepface import DeepFace
 from email.message import EmailMessage
 from io import BytesIO
 from PIL import Image
@@ -29,8 +33,11 @@ from flask import Flask, render_template_string, request, redirect, url_for, ses
 import openai
 from werkzeug.exceptions import RequestEntityTooLarge
 
+# Updated threshold for normalized embeddings using DeepFace (L2 normalized)
+FACE_VERIFICATION_THRESHOLD = 0.7
+
 # Load environment variables and set up Flask
-load_dotenv("file1.env")  
+load_dotenv(".env")  
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # Allow up to 64 MB uploads
 app.secret_key = 'your_secret_key_here'
@@ -58,7 +65,7 @@ def get_db_connection():
     try:
         connection = mysql.connector.connect(
             host=os.getenv("MYSQL_HOST"),
-            port=int(os.getenv("MYSQL_PORT", "3306")),  # Default to 3306 if MYSQL_PORT is not set
+            port=int(os.getenv("MYSQL_PORT", "3306")),
             user=os.getenv("MYSQL_USER"),
             password=os.getenv("MYSQL_PASSWORD"),
             database=os.getenv("MYSQL_DATABASE")
@@ -168,39 +175,65 @@ def ensure_voter_identifier_column():
 
 def get_face_encoding(face_data_str):
     """
-    Given a base64 data URL of an image (e.g. 'data:image/jpeg;base64,...'),
-    decode it and return the first face encoding detected.
+    Given a base64 data URL of an image or a JSON array of such images,
+    decode it, load it as a NumPy array, and then use DeepFace with the "Facenet" model
+    to obtain a robust face embedding. The embedding is L2 normalized.
+    If multiple images are provided, returns the average normalized embedding.
     """
     try:
-        header, encoded = face_data_str.split(',', 1)
-        img_data = base64.b64decode(encoded)
-        image = np.array(Image.open(BytesIO(img_data)))
-        encodings = face_recognition.face_encodings(image)
-        if encodings:
-            return encodings[0]
+        def compute_embedding(image_array):
+            representation = DeepFace.represent(image_array, model_name="Facenet", enforce_detection=False)
+            if representation and "embedding" in representation[0]:
+                embedding = np.array(representation[0]["embedding"])
+                norm = np.linalg.norm(embedding)
+                if norm > 0:
+                    return embedding / norm
+            return None
+
+        if face_data_str.strip().startswith('['):
+            face_list = json.loads(face_data_str)
+            embeddings = []
+            for data in face_list:
+                header, encoded = data.split(',', 1)
+                img_data = base64.b64decode(encoded)
+                image = np.array(Image.open(BytesIO(img_data)))
+                embedding = compute_embedding(image)
+                if embedding is not None:
+                    embeddings.append(embedding)
+            if embeddings:
+                avg_embedding = np.mean(embeddings, axis=0)
+                norm = np.linalg.norm(avg_embedding)
+                if norm > 0:
+                    return avg_embedding / norm
+        else:
+            header, encoded = face_data_str.split(',', 1)
+            img_data = base64.b64decode(encoded)
+            image = np.array(Image.open(BytesIO(img_data)))
+            embedding = compute_embedding(image)
+            if embedding is not None:
+                return embedding
     except Exception as e:
         logging.error(f"Error decoding face data: {e}")
     return None
 
-def is_face_already_registered(new_encoding, threshold=0.6):
+def is_face_already_registered(new_encoding, threshold=FACE_VERIFICATION_THRESHOLD):
     """
-    Check if the provided face encoding matches any of the stored face encodings
-    in the voters table. Returns True if a match is found.
+    Check if the provided face encoding matches any of the stored face encodings in the voters table.
+    Returns True if a match is found.
     """
     conn = get_db_connection()
     if conn:
         try:
             cur = conn.cursor(dictionary=True)
             query = "SELECT voter_id, face_data FROM voters WHERE face_data IS NOT NULL"
-            cur.execute(query)
+            cur.execute(query, ())
             existing_voters = cur.fetchall()
             for voter in existing_voters:
                 stored_face_data = voter.get("face_data")
                 if stored_face_data:
                     stored_encoding = get_face_encoding(stored_face_data)
                     if stored_encoding is not None:
-                        # Compute Euclidean distance between encodings
-                        distance = np.linalg.norm(new_encoding - stored_encoding)
+                        distance = np.linalg.norm(np.array(new_encoding) - np.array(stored_encoding))
                         if distance < threshold:
                             logging.debug(f"Found matching face (distance: {distance}) for voter_id {voter['voter_id']}")
                             return True
@@ -221,7 +254,6 @@ def ensure_face_data_column():
             cur.execute("SHOW COLUMNS FROM voters LIKE 'face_data'")
             result = cur.fetchone()
             if not result:
-                # Use MEDIUMTEXT to allow larger data (up to 16 MB)
                 cur.execute("ALTER TABLE voters ADD COLUMN face_data MEDIUMTEXT")
                 conn.commit()
                 logging.debug("face_data column added to voters table as MEDIUMTEXT.")
@@ -373,7 +405,6 @@ def login_voter(username: str, provided_voter_identifier: str, otp_provided=None
     conn = get_db_connection()
     if conn:
         try:
-            # Use a buffered cursor to ensure all results are read
             cur = conn.cursor(dictionary=True, buffered=True)
             query = """
                 SELECT voter_id, voter_username, voter_identifier, otp_secret, face_data
@@ -692,7 +723,13 @@ base_head = """
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
 <link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700&display=swap" rel="stylesheet">
 <style>
-  body { background: linear-gradient(135deg, #1e1e1e, #3a3a3a); font-family: 'Roboto', sans-serif; color: #ffcc00; }
+  body { 
+      background: linear-gradient(135deg, #1e1e1e, #3a3a3a); 
+      font-family: 'Roboto', sans-serif; 
+      color: #ffcc00; 
+      opacity: 1;
+      transition: transform 0.8s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+  }
   a { color: #ffcc00; }
   .btn-custom { background-color: #ffcc00; color: #000; font-weight: bold; }
   .card { background: rgba(0,0,0,0.85); border: none; border-radius: 10px; }
@@ -714,44 +751,136 @@ base_head = """
       box-shadow: 0 4px 8px rgba(0,0,0,0.3);
       text-decoration: none;
       z-index: 1000;
+      cursor: move;
   }
-  .floating-chat-icon:hover {
-      background-color: #e6b800;
-  }
-  /* Modal styles for chat history */
-  .modal {
-      display: none; 
-      position: fixed; 
-      z-index: 2000; 
-      left: 0;
-      top: 0;
-      width: 100%;
-      height: 100%;
-      overflow: auto;
-      background-color: rgba(0,0,0,0.8);
-  }
-  .modal-content {
-      background-color: #fefefe;
-      margin: 10% auto;
-      padding: 20px;
-      border: 1px solid #888;
-      width: 80%;
-      max-width: 600px;
+  .floating-chat-icon:hover { background-color: #e6b800; }
+  /* Advanced Toast Styling */
+  .custom-toast {
+      background: linear-gradient(135deg, #ffcc00, #ffc107);
+      border: none;
       border-radius: 10px;
-  }
-  .close {
-      color: #aaa;
-      float: right;
-      font-size: 28px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+      color: #000;
       font-weight: bold;
   }
-  .close:hover,
-  .close:focus {
-      color: black;
-      text-decoration: none;
-      cursor: pointer;
+  .custom-toast .toast-header {
+      background: transparent;
+      border-bottom: none;
+      padding-bottom: 0;
+  }
+  .custom-toast .toast-body {
+      font-size: 1rem;
+      animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.8; }
+      100% { opacity: 1; }
+  }
+  /* Advanced Page Transition Animations */
+  .advanced-fade-in {
+      animation: advancedFadeIn 0.8s forwards;
+  }
+  .advanced-fade-out {
+      animation: advancedFadeOut 0.8s forwards;
+  }
+  @keyframes advancedFadeIn {
+      0% { opacity: 0; transform: scale(0.8) translateY(20px) rotate(5deg); }
+      100% { opacity: 1; transform: scale(1) translateY(0) rotate(0); }
+  }
+  @keyframes advancedFadeOut {
+      0% { opacity: 1; transform: scale(1) translateY(0) rotate(0); }
+      100% { opacity: 0; transform: scale(0.8) translateY(-20px) rotate(-5deg); }
   }
 </style>
+<!-- Include jQuery and Bootstrap JS for Toast functionality -->
+<script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  // On DOM content loaded, add advanced-fade-in class to body for entry animation
+  document.addEventListener("DOMContentLoaded", function() {
+      document.body.classList.add("advanced-fade-in");
+  });
+  // Function to handle page transition animation
+  function animateTransition(callback) {
+      document.body.classList.remove("advanced-fade-in");
+      document.body.classList.add("advanced-fade-out");
+      setTimeout(callback, 800);
+  }
+  // Intercept clicks on all anchors and form submissions for transition effect
+  document.addEventListener("DOMContentLoaded", function() {
+      document.querySelectorAll("a").forEach(function(anchor) {
+          anchor.addEventListener("click", function(e) {
+              if(anchor.target === "_blank") return;
+              e.preventDefault();
+              var href = anchor.href;
+              animateTransition(function() {
+                  window.location = href;
+              });
+          });
+      });
+      document.querySelectorAll("form").forEach(function(form) {
+          form.addEventListener("submit", function(e) {
+              e.preventDefault();
+              animateTransition(function() {
+                  form.submit();
+              });
+          });
+      });
+  });
+  // Chatbot Icon Drag-and-Drop Restricted to Four Corners
+  document.addEventListener("DOMContentLoaded", function() {
+      const chatIcon = document.querySelector('.floating-chat-icon');
+      let isDragging = false;
+      let offsetX = 0;
+      let offsetY = 0;
+  
+      chatIcon.addEventListener('mousedown', function(e) {
+          isDragging = true;
+          offsetX = e.clientX - chatIcon.getBoundingClientRect().left;
+          offsetY = e.clientY - chatIcon.getBoundingClientRect().top;
+      });
+  
+      document.addEventListener('mousemove', function(e) {
+          if (isDragging) {
+              chatIcon.style.position = 'fixed';
+              chatIcon.style.left = (e.clientX - offsetX) + 'px';
+              chatIcon.style.top = (e.clientY - offsetY) + 'px';
+              // Clear any fixed corner styles
+              chatIcon.style.right = 'auto';
+              chatIcon.style.bottom = 'auto';
+          }
+      });
+  
+      document.addEventListener('mouseup', function(e) {
+          if (isDragging) {
+              isDragging = false;
+              const windowWidth = window.innerWidth;
+              const windowHeight = window.innerHeight;
+              const x = e.clientX;
+              const y = e.clientY;
+              let finalStyle = {};
+              // Snap horizontally
+              if (x < windowWidth / 2) {
+                  finalStyle.left = '30px';
+                  finalStyle.right = 'auto';
+              } else {
+                  finalStyle.right = '30px';
+                  finalStyle.left = 'auto';
+              }
+              // Snap vertically
+              if (y < windowHeight / 2) {
+                  finalStyle.top = '30px';
+                  finalStyle.bottom = 'auto';
+              } else {
+                  finalStyle.bottom = '30px';
+                  finalStyle.top = 'auto';
+              }
+              Object.assign(chatIcon.style, finalStyle);
+          }
+      });
+  });
+</script>
 """
 
 # ------------------------------------------------------------------------------
@@ -809,7 +938,7 @@ index_html = """
       <button class="btn btn-custom ml-2" onclick="window.location.href='{{ url_for('register') }}'">Register</button>
     </div>
   </div>
-  <!-- Floating Chat Icon -->
+  <!-- Floating Chatbot Icon -->
   <a href="{{ url_for('chat') }}" class="floating-chat-icon"><i class="fas fa-comment"></i></a>
   <!-- Custom Image Cursor Script with Interactive and Leave-Window Checks -->
   <script>
@@ -819,13 +948,9 @@ index_html = """
     
     document.addEventListener('mousemove', function(e) {
       const interactiveTags = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
-      // Hide when hovering interactive elements or the chatbot button.
-      if (
-          interactiveTags.includes(e.target.tagName) ||
-          (e.target.closest && e.target.closest('.floating-chat-icon'))
-      ) {
+      if (interactiveTags.includes(e.target.tagName) || (e.target.closest && e.target.closest('.floating-chat-icon')))
         customCursor.style.display = 'none';
-      } else {
+      else {
         customCursor.style.display = 'block';
         customCursor.style.left = e.clientX + 'px';
         customCursor.style.top = e.clientY + 'px';
@@ -833,16 +958,17 @@ index_html = """
     });
     
     window.addEventListener('mouseout', function(e) {
-      if (e.clientX <= 0 || e.clientY <= 0 ||
-          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight)
         customCursor.style.display = 'none';
-      }
     });
   </script>
 </body>
 </html>
 """
 
+# ------------------------------------------------------------------------------
+# Home Page Route
+# ------------------------------------------------------------------------------
 @app.route("/")
 def index():
     if "user" in session:
@@ -860,12 +986,7 @@ face_register_html = """
   <title>Face Registration - E‐Voting System</title>
   {{ base_head|safe }}
   <style>
-    #videoElement {
-      width: 100%;
-      max-width: 400px;
-      border: 2px solid #ffcc00;
-      border-radius: 10px;
-    }
+    #videoElement { width: 100%; max-width: 400px; border: 2px solid #ffcc00; border-radius: 10px; }
   </style>
 </head>
 <body>
@@ -878,9 +999,25 @@ face_register_html = """
         <canvas id="canvas" style="display:none;"></canvas>
         <form method="post" id="faceForm">
           <input type="hidden" name="face_data" id="face_data">
-          <button type="button" class="btn btn-custom btn-block mt-3" id="captureBtn">Capture Face</button>
+          <button type="button" class="btn btn-custom btn-block mt-3" id="captureBtn">Capture Single Frame</button>
+          <button type="button" class="btn btn-custom btn-block mt-3" id="advancedCaptureBtn">Advanced Capture (Multiple Frames)</button>
           <button type="submit" class="btn btn-custom btn-block mt-3">Submit Registration</button>
         </form>
+      </div>
+    </div>
+  </div>
+  <!-- Advanced Toast Notification Container -->
+  <div aria-live="polite" aria-atomic="true" style="position: fixed; top: 20px; right: 20px; z-index: 1080;">
+    <div id="toastNotification" class="toast custom-toast animate__animated" data-delay="5000">
+      <div class="toast-header">
+        <strong class="mr-auto">Notification</strong>
+        <small class="text-muted">now</small>
+        <button type="button" class="ml-2 mb-1 close" data-dismiss="toast" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="toast-body">
+        Advanced face capture completed. You can now submit the registration.
       </div>
     </div>
   </div>
@@ -888,36 +1025,53 @@ face_register_html = """
   var video = document.getElementById('videoElement');
   var canvas = document.getElementById('canvas');
   var captureBtn = document.getElementById('captureBtn');
+  var advancedCaptureBtn = document.getElementById('advancedCaptureBtn');
   var faceDataInput = document.getElementById('face_data');
 
   if (navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(function(stream) {
-        video.srcObject = stream;
-      })
-      .catch(function(error) {
-        console.log("Error accessing webcam.");
-      });
+      navigator.mediaDevices.getUserMedia({ video: true })
+          .then(function(stream) { video.srcObject = stream; })
+          .catch(function(error) { console.log("Error accessing webcam."); });
   }
 
   captureBtn.addEventListener('click', function() {
-    // Set desired dimensions (adjust as needed for your use case)
-    const desiredWidth = 320;
-    const desiredHeight = 240;
-    canvas.width = desiredWidth;
-    canvas.height = desiredHeight;
-    // Draw the video frame into the canvas with the new dimensions
-    canvas.getContext('2d').drawImage(video, 0, 0, desiredWidth, desiredHeight);
-    // Convert the canvas image to a compressed JPEG (quality 0.7 reduces file size)
-    const dataURL = canvas.toDataURL('image/jpeg', 0.7);
-    faceDataInput.value = dataURL;
-    alert("Face captured. You can now submit the registration.");
+      var desiredWidth = 320, desiredHeight = 240;
+      canvas.width = desiredWidth;
+      canvas.height = desiredHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0, desiredWidth, desiredHeight);
+      var dataURL = canvas.toDataURL('image/jpeg', 0.7);
+      faceDataInput.value = dataURL;
+      alert("Face captured. You can now submit the registration.");
+  });
+
+  advancedCaptureBtn.addEventListener('click', function() {
+      var desiredWidth = 320, desiredHeight = 240, frames = [], captureCount = 3, interval = 1000;
+      function captureFrame(count) {
+          canvas.width = desiredWidth;
+          canvas.height = desiredHeight;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
+          var dataURL = canvas.toDataURL('image/jpeg', 0.7);
+          frames.push(dataURL);
+          if (count < captureCount) {
+              setTimeout(function() { captureFrame(count + 1); }, interval);
+          } else {
+              faceDataInput.value = JSON.stringify(frames);
+              var toastElem = $('#toastNotification');
+              toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+              toastElem.toast('show');
+          }
+      }
+      captureFrame(1);
   });
 </script>
 </body>
 </html>
 """
 
+# ------------------------------------------------------------------------------
+# Routes for Registration, Login, and Face Verification
+# ------------------------------------------------------------------------------
 @app.route("/face_register", methods=["GET", "POST"])
 def face_register():
     if not all(k in session for k in ['temp_username', 'temp_voter_identifier', 'temp_email', 'register_secret']):
@@ -928,19 +1082,13 @@ def face_register():
         if not face_data:
             flash("Face scan data is required.", "error")
             return render_template_string(face_register_html, base_head=base_head)
-            
-        # --- NEW: Compute encoding for the captured face ---
         new_encoding = get_face_encoding(face_data)
         if new_encoding is None:
             flash("No face detected. Please try again.", "error")
             return render_template_string(face_register_html, base_head=base_head)
-            
-        # --- NEW: Check if this face is already registered ---
         if is_face_already_registered(new_encoding):
             flash("This face is already registered with another account.", "error")
             return redirect(url_for('register'))
-            
-        # If the face is unique, proceed with registration
         username = session.get('temp_username')
         voter_identifier = session.get('temp_voter_identifier')
         email = session.get('temp_email')
@@ -1178,12 +1326,7 @@ face_login_html = """
   <title>Face Verification - E‐Voting System</title>
   {{ base_head|safe }}
   <style>
-    #videoElement {
-      width: 100%;
-      max-width: 400px;
-      border: 2px solid #ffcc00;
-      border-radius: 10px;
-    }
+    #videoElement { width: 100%; max-width: 400px; border: 2px solid #ffcc00; border-radius: 10px; }
   </style>
 </head>
 <body>
@@ -1196,41 +1339,71 @@ face_login_html = """
         <canvas id="canvas" style="display:none;"></canvas>
         <form method="post" id="faceForm">
           <input type="hidden" name="face_data" id="face_data">
-          <button type="button" class="btn btn-custom btn-block mt-3" id="captureBtn">Capture Face</button>
+          <button type="button" class="btn btn-custom btn-block mt-3" id="captureBtn">Capture Single Frame</button>
+          <button type="button" class="btn btn-custom btn-block mt-3" id="advancedCaptureBtn">Advanced Capture (Multiple Frames)</button>
           <button type="submit" class="btn btn-custom btn-block mt-3">Verify and Login</button>
         </form>
       </div>
     </div>
   </div>
-  <script>
+  <!-- Advanced Toast Notification Container -->
+  <div aria-live="polite" aria-atomic="true" style="position: fixed; top: 20px; right: 20px; z-index: 1080;">
+    <div id="toastNotification" class="toast custom-toast animate__animated" data-delay="5000">
+      <div class="toast-header">
+        <strong class="mr-auto">Notification</strong>
+        <small class="text-muted">now</small>
+        <button type="button" class="ml-2 mb-1 close" data-dismiss="toast" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="toast-body">
+        Advanced face capture completed. You can now verify and login.
+      </div>
+    </div>
+  </div>
+<script>
   var video = document.getElementById('videoElement');
   var canvas = document.getElementById('canvas');
   var captureBtn = document.getElementById('captureBtn');
+  var advancedCaptureBtn = document.getElementById('advancedCaptureBtn');
   var faceDataInput = document.getElementById('face_data');
 
   if (navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(function(stream) {
-        video.srcObject = stream;
-      })
-      .catch(function(error) {
-        console.log("Error accessing webcam for face verification:", error);
-      });
+      navigator.mediaDevices.getUserMedia({ video: true })
+          .then(function(stream) { video.srcObject = stream; })
+          .catch(function(error) { console.log("Error accessing webcam for face verification:", error); });
   }
 
   captureBtn.addEventListener('click', function() {
-    // Downscale the image to reduce file size
-    const desiredWidth = 320;
-    const desiredHeight = 240;
-    canvas.width = desiredWidth;
-    canvas.height = desiredHeight;
-    var ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
-    // Compress as JPEG with quality 0.5
-    const dataURL = canvas.toDataURL('image/jpeg', 0.5);
-    faceDataInput.value = dataURL;
-    console.log("Captured face data (first 100 chars):", dataURL.substring(0,100));
-    alert("Face captured. You can now verify and login.");
+      var desiredWidth = 320, desiredHeight = 240;
+      canvas.width = desiredWidth;
+      canvas.height = desiredHeight;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
+      var dataURL = canvas.toDataURL('image/jpeg', 0.5);
+      faceDataInput.value = dataURL;
+      alert("Face captured. You can now verify and login.");
+  });
+
+  advancedCaptureBtn.addEventListener('click', function() {
+      var desiredWidth = 320, desiredHeight = 240, frames = [], captureCount = 3, interval = 1000;
+      function captureFrame(count) {
+          canvas.width = desiredWidth;
+          canvas.height = desiredHeight;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
+          var dataURL = canvas.toDataURL('image/jpeg', 0.5);
+          frames.push(dataURL);
+          if (count < captureCount) {
+              setTimeout(function() { captureFrame(count + 1); }, interval);
+          } else {
+              faceDataInput.value = JSON.stringify(frames);
+              var toastElem = $('#toastNotification');
+              toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+              toastElem.toast('show');
+          }
+      }
+      captureFrame(1);
   });
 </script>
 </body>
@@ -1392,6 +1565,9 @@ login_html = """
 </html>
 """
 
+# ------------------------------------------------------------------------------
+# Login Route
+# ------------------------------------------------------------------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
     show_login_otp = False
@@ -1416,62 +1592,55 @@ def login():
                 login_otp = request.form.get("login_otp").strip()
                 user_obj = login_voter(username, voter_identifier, otp_provided=login_otp)
                 if user_obj and "otp_pending" not in user_obj:
-                    # Store only the voter_id in the session
                     session["temp_user_id"] = user_obj["voter_id"]
                     session.permanent = True
-                    flash("OTP verified. Please complete face verification.", "info")
                     return redirect(url_for('face_login_voter'))
                 else:
                     flash("Invalid OTP or credentials. Please try again.", "error")
         else:
-            # Admin login logic remains unchanged.
-            pass
+            # Admin login branch implementation
+            password = request.form.get("password").strip()
+            admin_record = login_admin(username, password)
+            if admin_record:
+                session["user"] = admin_record
+                session["login_mode"] = "admin"
+                flash(f"Admin login successful. Welcome {admin_record['admin_username']}.", "success")
+                return redirect(url_for("admin_panel"))
+            else:
+                flash("Invalid admin credentials. Please try again.", "error")
     return render_template_string(login_html, show_login_otp=False, base_head=base_head)
 
 @app.route("/face_login_voter", methods=["GET", "POST"])
 def face_login_voter():
-    # Retrieve the voter_id stored during OTP verification
     user_id = session.get("temp_user_id")
     if not user_id:
         flash("Session expired. Please login again.", "error")
         return redirect(url_for('login'))
-    
-    # Retrieve the voter record from the database
     user_obj = get_voter_by_id(user_id)
     if not user_obj:
         flash("User not found. Please login again.", "error")
         return redirect(url_for('login'))
-    
     if request.method == "POST":
         face_data = request.form.get("face_data")
         if not face_data:
             flash("Face scan data is required for login.", "error")
             return render_template_string(face_login_html, base_head=base_head)
-        
-        # --- NEW: Compute encoding for the face captured during login ---
         login_encoding = get_face_encoding(face_data)
         if login_encoding is None:
             flash("No face detected during login. Please try again.", "error")
             return render_template_string(face_login_html, base_head=base_head)
-        
-        # Retrieve stored face data for the user
         stored_face_data = user_obj.get("face_data")
         if not stored_face_data:
             flash("No registered face data found for this account. Please complete face registration.", "error")
             return redirect(url_for('face_register'))
-            
         stored_encoding = get_face_encoding(stored_face_data)
         if stored_encoding is None:
             flash("Error processing stored face data.", "error")
             return redirect(url_for('face_register'))
-        
-        # Compare the login face encoding with the stored encoding
-        distance = np.linalg.norm(login_encoding - stored_encoding)
-        if distance > 0.6:
+        distance = np.linalg.norm(np.array(login_encoding) - np.array(stored_encoding))
+        if distance > FACE_VERIFICATION_THRESHOLD:
             flash("Face verification failed. Face does not match our records.", "error")
             return render_template_string(face_login_html, base_head=base_head)
-        
-        # Successful face verification; complete login
         session["user"] = {
             "voter_id": user_obj["voter_id"],
             "voter_username": user_obj["voter_username"],
@@ -1479,9 +1648,9 @@ def face_login_voter():
         }
         session["login_mode"] = "voter"
         session.pop("temp_user_id", None)
+        flash("Login Using FACE ID successful.", "info")
         flash(f"Login successful! Welcome {user_obj['voter_username']}.", "success")
         return redirect(url_for('voter_panel'))
-    
     return render_template_string(face_login_html, base_head=base_head)
 
 # ------------------------------------------------------------------------------
