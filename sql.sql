@@ -44,16 +44,17 @@ CREATE TABLE IF NOT EXISTS candidates (
 -- 2.5. Create the "voters" table.
 --    (Note: voters do not log in using a password—instead, they use their voter_identifier.
 --     However, the password_hash field is defined as NOT NULL so we insert an empty string for voters.)
-CREATE TABLE voters (
-    voter_id INT NOT NULL AUTO_INCREMENT,
-    voter_username VARCHAR(255) NOT NULL,
-    voter_identifier VARCHAR(100) NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    full_name VARCHAR(255) NOT NULL,
-    role VARCHAR(50) DEFAULT 'Voter',
-    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    otp_secret VARCHAR(32) NOT NULL,
-    PRIMARY KEY (voter_id)
+ CREATE TABLE IF NOT EXISTS voters (
+	voter_id INT NOT NULL AUTO_INCREMENT,
+	voter_username VARCHAR(255) NOT NULL,
+	voter_identifier VARCHAR(100) NOT NULL,
+	email VARCHAR(255) NOT NULL,
+	full_name VARCHAR(255) NOT NULL,
+	role VARCHAR(50) DEFAULT 'Voter',
+	registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	otp_secret VARCHAR(32) NOT NULL,
+	face_data MEDIUMTEXT,
+	PRIMARY KEY (voter_id)
 ) ENGINE = InnoDB;
 
 -- 2.6. Create the "admins" table.
