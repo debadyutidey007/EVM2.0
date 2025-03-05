@@ -1598,6 +1598,7 @@ def admin_panel():
 # ------------------------------------------------------------------------------
 # Chatbot Integration (Advanced using OpenAI API) with Enhanced UI/UX, Voice Assistant,
 # Chat History, New Chat Buttons, and Clear History functionality
+# Chat History and New Chat Buttons
 # ------------------------------------------------------------------------------
 chatbot_html = """
 <!doctype html>
@@ -1610,6 +1611,9 @@ chatbot_html = """
     /* Global Styles */
     body {
       background: linear-gradient(135deg, #1a1a2e, #16213e);
+    body 
+	{
+      background: linear-gradient(135deg, #1e1e1e, #3a3a3a);
       font-family: 'Roboto', sans-serif;
       margin: 0;
       padding: 0;
@@ -1620,6 +1624,28 @@ chatbot_html = """
       max-width: 800px;
       margin: 50px auto;
       background: #0f3460;
+    .chat-container 
+	{
+      max-width: 700px;
+      margin: 40px auto;
+      background-color: #1f1f1f;
+      border-radius: 15px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      padding: 20px;
+    }
+    .chat-header 
+	{
+      text-align: center;
+      margin-bottom: 20px;
+      color: #ffcc00;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    .chat-log 
+	{
+      height: 400px;
+      overflow-y: auto;
+      background: #292929;
       border-radius: 10px;
       box-shadow: 0 8px 16px rgba(0,0,0,0.7);
       overflow: hidden;
@@ -1646,6 +1672,9 @@ chatbot_html = """
     }
     .message {
       margin: 12px 0;
+    .message 
+	{
+      margin: 10px 0;
       display: flex;
       align-items: flex-start;
       opacity: 0;
@@ -1654,10 +1683,12 @@ chatbot_html = """
     @keyframes messageFadeIn {
       to { opacity: 1; }
     }
-    .message.bot {
+    .message.bot 
+	{
       justify-content: flex-start;
     }
-    .message.user {
+    .message.user 
+	{
       justify-content: flex-end;
     }
     .message-content {
@@ -1670,20 +1701,36 @@ chatbot_html = """
     .message.bot .message-content {
       background: #0f3460;
       color: #ffcc00;
+    .message-content 
+	{
+      max-width: 80%;
+      padding: 10px 15px;
+      border-radius: 15px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    .message.bot .message-content 
+	{
+      background: #444;
+      color: #fff;
       border-top-left-radius: 0;
     }
-    .message.user .message-content {
+    .message.user .message-content 
+	{
       background: #ffcc00;
       color: #0f3460;
       border-top-right-radius: 0;
     }
     /* Input Area */
     .chat-input-container {
+    .chat-input-container 
+	{
       display: flex;
       padding: 20px;
       background: #16213e;
     }
-    .chat-input {
+    .chat-input 
+	{
       flex: 1;
       padding: 12px 16px;
       border: none;
@@ -1694,6 +1741,9 @@ chatbot_html = """
     .chat-send, .chat-record, .chat-history, .chat-new {
       margin-left: 10px;
       padding: 12px 20px;
+    .chat-send, .chat-record, .chat-history, .chat-new 
+	{
+      padding: 12px 15px;
       border: none;
       border-radius: 4px;
       background: #e94560;
@@ -1710,6 +1760,16 @@ chatbot_html = """
       display: none;
       position: fixed;
       z-index: 3000;
+    .chat-send:hover, .chat-record:hover, .chat-history:hover, .chat-new:hover 
+	{
+      background: #e6b800;
+    }
+    /* Modal styles for chat history */
+    .modal 
+	{
+      display: none; 
+      position: fixed; 
+      z-index: 2000; 
       left: 0;
       top: 0;
       width: 100%;
@@ -1727,6 +1787,12 @@ chatbot_html = """
       background: #1a1a2e;
       padding: 30px;
       border-radius: 8px;
+    .modal-content 
+	{
+      background-color: #fefefe;
+      margin: 10% auto;
+      padding: 20px;
+      border: 1px solid #888;
       width: 80%;
       max-width: 600px;
       color: #ffcc00;
@@ -1760,6 +1826,18 @@ chatbot_html = """
       top: 10px;
       right: 15px;
       font-size: 28px;
+    .close 
+	{
+      color: #aaa;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+    }
+    .close:hover,
+    .close:focus 
+	{
+      color: black;
+      text-decoration: none;
       cursor: pointer;
       color: #e94560;
     }
@@ -1798,7 +1876,8 @@ chatbot_html = """
     </p>
   </div>
   <script>
-    function appendMessage(role, text) {
+    function appendMessage(role, text) 
+	{
       var chatLog = document.getElementById("chat-log");
       var messageDiv = document.createElement("div");
       messageDiv.className = "message " + role;
@@ -1825,8 +1904,10 @@ chatbot_html = """
         appendMessage("bot", data.response);
       });
     });
-    document.getElementById("chat-input").addEventListener("keypress", function(e) {
-      if (e.key === "Enter") {
+    document.getElementById("chat-input").addEventListener("keypress", function(e) 
+	{
+      if (e.key === "Enter") 
+	  {
         e.preventDefault();
         document.getElementById("send-btn").click();
       }
@@ -1843,6 +1924,21 @@ chatbot_html = """
       recordBtn.innerText = "Voice Not Supported";
     }
     if (recognition) {
+    if ('SpeechRecognition' in window) 
+	{
+      recognition = new SpeechRecognition();
+    } 
+	else if ('webkitSpeechRecognition' in window) 
+	{
+      recognition = new webkitSpeechRecognition();
+    } 
+	else 
+	{
+      recordBtn.disabled = true;
+      recordBtn.innerText = "Voice Not Supported";
+    }
+    if (recognition) 
+	{
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.lang = 'en-US';
@@ -1858,6 +1954,17 @@ chatbot_html = """
       };
     }
     // Chat History Modal with Animation
+      recognition.onresult = function(event) 
+	  {
+        var transcript = event.results[0][0].transcript;
+        document.getElementById("chat-input").value = transcript;
+      };
+      recognition.onerror = function(event) 
+	  {
+        console.error("Speech recognition error", event.error);
+      };
+    }
+    // Chat History Button: Fetch and display chat history in a modal
     var historyBtn = document.getElementById("history-btn");
     var modal = document.getElementById("chat-history-modal");
     var modalContent = document.getElementById("chat-history-content");
@@ -1887,6 +1994,23 @@ chatbot_html = """
         setTimeout(function() {
           modal.style.display = "none";
         }, 300);
+        .then(response => response.json())
+        .then(data => {
+          var historyHtml = "";
+          data.forEach(function(item) {
+            historyHtml += "<p><strong>" + item.role.toUpperCase() + ":</strong> " + item.message + " <em>(" + item.timestamp + ")</em></p>";
+          });
+          modalContent.innerHTML = historyHtml;
+          modal.style.display = "block";
+        });
+    });
+    closeModal.addEventListener("click", function() {
+      modal.style.display = "none";
+    });
+    window.addEventListener("click", function(event) {
+      if (event.target == modal) 
+	  {
+        modal.style.display = "none";
       }
     });
     // New Chat Button: Clear the chat log
@@ -2009,6 +2133,38 @@ def get_chatbot_response(message: str) -> str:
          else:
              return "I'm sorry, I didn't understand that. For further assistance, please call our helpline at 1-800-123-4567."
 
+    """
+    Generate response based on some predefined texts
+    """
+    try:
+        response = openai.ChatCompletion.create(
+           model="gpt-3.5-turbo",
+           messages=[
+               {"role": "system", "content": "You are a highly intelligent assistant for an e-voting system. Provide concise and helpful answers."},
+               {"role": "user", "content": message}
+           ],
+           temperature=0.7,
+           max_tokens=150
+        )
+        return response["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logging.error(f"OpenAI API error: {e}")
+        message = message.lower()
+        if "hi" in message:
+            return "Hi, how can I help you today? \nHere are some few steps to cast your vote to your favourite political party:- \n\t(i) Register Yourself in the Register Panel, \n\t(ii) After registering your Username, Voter ID and with your email a OTP will be sent to your email for registration, \n\t(iii) After Registration, in the Login panel please add your Username and Voter ID and press on the Login button, You will get a OTP on the website screen which when added in the Verify OTP field then you can enter inside your voter panel to cast your vote."
+        if "vote" in message:
+            return "To cast your vote, please go to the voter panel after logging in."
+        elif "register" in message:
+            return "You can register by clicking on the Register link on the home page."
+        elif "results" in message:
+            return "Election results can be viewed on the admin panel (login as admin required)."
+        elif "help" in message:
+            return "How can I assist you? You can ask about voting, registration, or election results."
+        elif "When is the Election Results Date?" in message:
+            return "It will be declared after 1st March 2025."
+        else:
+            return "I'm sorry, I didn't understand that. Can you please rephrase?"
+
 def log_chat_message(role: str, message: str):
     """JSON conversation history file."""
     try:
@@ -2066,6 +2222,23 @@ def clear_chat_history():
     except Exception as e:
         logging.error(f"Error clearing chat history: {e}")
         return jsonify({"success": False, "message": "Failed to clear chat history."})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+@app.route("/chat_history")
+def chat_history():
+    """Return the JSON chat conversation history."""
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, "r") as f:
+                history = json.load(f)
+        else:
+            history = []
+    except Exception as e:
+         logging.error(f"Error reading chat history: {e}")
+         history = []
+    return jsonify(history)
 
 if __name__ == '__main__':
     app.run(debug=True)
