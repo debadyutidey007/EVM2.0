@@ -2,3 +2,4 @@ venv/
 .env 
 evoting_system.log 
 .history/ 
+chat_history.json

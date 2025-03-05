@@ -1,1 +1,52 @@
-[]
+[
+    {
+        "role": "user",
+        "message": "Hi",
+        "timestamp": "2025-03-05T16:14:01.902492"
+    },
+    {
+        "role": "bot",
+        "message": "Hi, how can I help you today?",
+        "timestamp": "2025-03-05T16:14:01.904744"
+    },
+    {
+        "role": "user",
+        "message": "Hey",
+        "timestamp": "2025-03-05T16:14:06.498510"
+    },
+    {
+        "role": "bot",
+        "message": "I'm sorry, I didn't understand that. Can you please rephrase?",
+        "timestamp": "2025-03-05T16:14:06.500736"
+    },
+    {
+        "role": "user",
+        "message": "Fuck You",
+        "timestamp": "2025-03-05T16:14:13.534675"
+    },
+    {
+        "role": "bot",
+        "message": "I'm sorry, I didn't understand that. Can you please rephrase?",
+        "timestamp": "2025-03-05T16:14:13.538679"
+    },
+    {
+        "role": "user",
+        "message": "Hi",
+        "timestamp": "2025-03-05T16:20:28.804868"
+    },
+    {
+        "role": "bot",
+        "message": "Hi, how can I help you today?",
+        "timestamp": "2025-03-05T16:20:28.807251"
+    },
+    {
+        "role": "user",
+        "message": "Hello.",
+        "timestamp": "2025-03-05T16:20:40.432794"
+    },
+    {
+        "role": "bot",
+        "message": "I'm sorry, I didn't understand that. Can you please rephrase?",
+        "timestamp": "2025-03-05T16:20:40.436790"
+    }
+]
