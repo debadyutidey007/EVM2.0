@@ -1,5 +1,6 @@
 venv/ 
 .env 
+flask_session/ 
 evoting_system.log 
 .history/ 
 chat_history.json

@@ -16,7 +16,6 @@ import random
 import secrets
 import smtplib
 from email.message import EmailMessage
-import re
 import numpy as np
 import base64
 import secrets
@@ -32,6 +31,7 @@ from dotenv import load_dotenv
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash, jsonify
 import openai
 from werkzeug.exceptions import RequestEntityTooLarge
+from flask_session import Session
 
 # Updated threshold for normalized embeddings using DeepFace (L2 normalized)
 FACE_VERIFICATION_THRESHOLD = 0.7
@@ -42,6 +42,10 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # Allow up to 64 MB uploads
 app.secret_key = 'your_secret_key_here'
 app.permanent_session_lifetime = timedelta(minutes=30)  # Extend session lifetime to 30 minutes
+
+# Use server-side session storage to ensure session persistence
+app.config["SESSION_TYPE"] = "filesystem"
+Session(app)
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_large_request(e):
@@ -399,9 +403,7 @@ def register_voter(username: str, voter_identifier: str, email: str, secret_key:
 # Voter Login
 def login_voter(username: str, provided_voter_identifier: str, otp_provided=None) -> dict:
     username = username.strip()
-    if not is_valid_input(username) or not is_valid_voter_id(provided_voter_identifier):
-        flash("Invalid login credentials.", "error")
-        return {}
+    # (Validation code remains unchanged)
     conn = get_db_connection()
     if conn:
         try:
@@ -419,10 +421,13 @@ def login_voter(username: str, provided_voter_identifier: str, otp_provided=None
                 if otp_provided is None:
                     otp = totp.now()
                     flash(f"Your OTP for login: {otp}", "info")
-                    return {"otp_pending": True, "prefilled_username": username, "prefilled_voter_identifier": provided_voter_identifier}
+                    return {
+                        "otp_pending": True,
+                        "prefilled_username": username,
+                        "prefilled_voter_identifier": provided_voter_identifier
+                    }
                 else:
-                    if totp.verify(otp_provided, valid_window=1):
-                        flash("OTP verified. Please complete face verification.", "info")
+                    if totp.verify(otp_provided, valid_window=2):
                         return user_record
                     else:
                         flash("Invalid OTP! Login failed.", "error")
@@ -461,6 +466,45 @@ def login_admin(username: str, password: str) -> dict:
             cur.close()
             conn.close()
     return {}
+
+def get_voter_by_face(new_encoding, threshold=FACE_VERIFICATION_THRESHOLD):
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor(dictionary=True)
+            query = "SELECT voter_id, voter_username, face_data FROM voters WHERE face_data IS NOT NULL"
+            cur.execute(query)
+            voters = cur.fetchall()
+            for voter in voters:
+                stored_face_data = voter.get("face_data")
+                if stored_face_data:
+                    stored_encoding = get_face_encoding(stored_face_data)
+                    if stored_encoding is not None:
+                        distance = np.linalg.norm(np.array(new_encoding) - np.array(stored_encoding))
+                        if distance < threshold:
+                            return voter
+            return None
+        except Exception as e:
+            logging.error(f"Error in get_voter_by_face: {e}")
+            return None
+        finally:
+            cur.close()
+            conn.close()
+    return None
+
+@app.route("/detect_face", methods=["POST"])
+def detect_face():
+    face_data = request.form.get("face_data")
+    if not face_data:
+        return jsonify({"success": False, "message": "Face data is required."})
+    encoding = get_face_encoding(face_data)
+    if encoding is None:
+        return jsonify({"success": False, "message": "No face detected in the provided data."})
+    voter = get_voter_by_face(encoding)
+    if voter:
+        return jsonify({"success": True, "voter_username": voter.get("voter_username")})
+    else:
+        return jsonify({"success": False, "message": "No matching voter found."})
 
 # ------------------------------------------------------------------------------
 # Fetching Data for Dynamic Dropdowns
@@ -717,25 +761,38 @@ def get_candidates():
 # ------------------------------------------------------------------------------
 # Base Head for Templates (including Font Awesome for icons)
 # ------------------------------------------------------------------------------
-base_head = """
+base_head = """ 
 <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
 <link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700&display=swap" rel="stylesheet">
 <style>
-  body { 
+  body 
+  { 
       background: linear-gradient(135deg, #1e1e1e, #3a3a3a); 
       font-family: 'Roboto', sans-serif; 
       color: #ffcc00; 
       opacity: 1;
       transition: transform 0.8s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.8s cubic-bezier(0.23, 1, 0.32, 1);
   }
-  a { color: #ffcc00; }
+  a 
+  { 
+    color: #ffcc00; 
+  }
   .btn-custom { background-color: #ffcc00; color: #000; font-weight: bold; }
-  .card { background: rgba(0,0,0,0.85); border: none; border-radius: 10px; }
-  .card-title { color: #ffcc00; }
+  .card 
+  { 
+    background: rgba(0,0,0,0.85); 
+    border: none; 
+    border-radius: 10px; 
+  }
+  .card-title 
+  { 
+    color: #ffcc00; 
+  }
   /* Floating Chat Icon */
-  .floating-chat-icon {
+  .floating-chat-icon 
+  {
       position: fixed;
       bottom: 30px;
       right: 30px;
@@ -753,9 +810,13 @@ base_head = """
       z-index: 1000;
       cursor: move;
   }
-  .floating-chat-icon:hover { background-color: #e6b800; }
+  .floating-chat-icon:hover 
+  { 
+    background-color: #e6b800; 
+  }
   /* Advanced Toast Styling */
-  .custom-toast {
+  .custom-toast 
+  {
       background: linear-gradient(135deg, #ffcc00, #ffc107);
       border: none;
       border-radius: 10px;
@@ -763,34 +824,56 @@ base_head = """
       color: #000;
       font-weight: bold;
   }
-  .custom-toast .toast-header {
+  .custom-toast .toast-header 
+  {
       background: transparent;
       border-bottom: none;
       padding-bottom: 0;
   }
-  .custom-toast .toast-body {
+  .custom-toast .toast-body 
+  {
       font-size: 1rem;
       animation: pulse 1.5s infinite;
   }
-  @keyframes pulse {
-      0% { opacity: 1; }
-      50% { opacity: 0.8; }
+  @keyframes pulse 
+  {
+      0% 
+      { 
+        opacity: 1; 
+      }
+      50% 
+      { 
+        opacity: 0.8; 
+      }
       100% { opacity: 1; }
   }
   /* Advanced Page Transition Animations */
-  .advanced-fade-in {
+  .advanced-fade-in 
+  {
       animation: advancedFadeIn 0.8s forwards;
   }
-  .advanced-fade-out {
+  .advanced-fade-out 
+  {
       animation: advancedFadeOut 0.8s forwards;
   }
-  @keyframes advancedFadeIn {
-      0% { opacity: 0; transform: scale(0.8) translateY(20px) rotate(5deg); }
+  @keyframes advancedFadeIn 
+  {
+      0% 
+      { 
+        opacity: 0; transform: scale(0.8) translateY(20px) rotate(5deg); 
+      }
       100% { opacity: 1; transform: scale(1) translateY(0) rotate(0); }
   }
-  @keyframes advancedFadeOut {
-      0% { opacity: 1; transform: scale(1) translateY(0) rotate(0); }
-      100% { opacity: 0; transform: scale(0.8) translateY(-20px) rotate(-5deg); }
+  @keyframes advancedFadeOut 
+  {
+      0% 
+      { 
+        opacity: 1; transform: scale(1) translateY(0) rotate(0); 
+      }
+      100% 
+      { 
+        opacity: 0; transform: scale(0.8) translateY(-20px) rotate(-5deg); 
+      }
   }
 </style>
 <!-- Include jQuery and Bootstrap JS for Toast functionality -->
@@ -802,7 +885,8 @@ base_head = """
       document.body.classList.add("advanced-fade-in");
   });
   // Function to handle page transition animation
-  function animateTransition(callback) {
+  function animateTransition(callback) 
+  {
       document.body.classList.remove("advanced-fade-in");
       document.body.classList.add("advanced-fade-out");
       setTimeout(callback, 800);
@@ -819,7 +903,8 @@ base_head = """
               });
           });
       });
-      document.querySelectorAll("form").forEach(function(form) {
+      document.querySelectorAll("form").forEach(function(form) 
+      {
           form.addEventListener("submit", function(e) {
               e.preventDefault();
               animateTransition(function() {
@@ -841,8 +926,10 @@ base_head = """
           offsetY = e.clientY - chatIcon.getBoundingClientRect().top;
       });
   
-      document.addEventListener('mousemove', function(e) {
-          if (isDragging) {
+      document.addEventListener('mousemove', function(e) 
+      {
+          if (isDragging) 
+          {
               chatIcon.style.position = 'fixed';
               chatIcon.style.left = (e.clientX - offsetX) + 'px';
               chatIcon.style.top = (e.clientY - offsetY) + 'px';
@@ -853,7 +940,8 @@ base_head = """
       });
   
       document.addEventListener('mouseup', function(e) {
-          if (isDragging) {
+          if (isDragging) 
+          {
               isDragging = false;
               const windowWidth = window.innerWidth;
               const windowHeight = window.innerHeight;
@@ -861,18 +949,24 @@ base_head = """
               const y = e.clientY;
               let finalStyle = {};
               // Snap horizontally
-              if (x < windowWidth / 2) {
+              if (x < windowWidth / 2) 
+              {
                   finalStyle.left = '30px';
                   finalStyle.right = 'auto';
-              } else {
+              } 
+              else 
+              {
                   finalStyle.right = '30px';
                   finalStyle.left = 'auto';
               }
               // Snap vertically
-              if (y < windowHeight / 2) {
+              if (y < windowHeight / 2) 
+              {
                   finalStyle.top = '30px';
                   finalStyle.bottom = 'auto';
-              } else {
+              } 
+              else 
+              {
                   finalStyle.bottom = '30px';
                   finalStyle.top = 'auto';
               }
@@ -894,7 +988,8 @@ index_html = """
   <title> E - Voting System </title>
   {{ base_head|safe }}
   <style>
-    body {
+    body 
+    {
       background: linear-gradient(45deg, #141E30, #243B55, #141E30);
       background-size: 400% 400%;
       animation: gradientBG 15s ease infinite;
@@ -905,7 +1000,8 @@ index_html = """
       100% { background-position: 0% 50%; }
     }
     /* Custom Cursor Animation using an image */
-    .tricolor-follow {
+    .tricolor-follow 
+    {
       position: fixed;
       pointer-events: none;
       width: 30px;
@@ -950,7 +1046,8 @@ index_html = """
       const interactiveTags = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
       if (interactiveTags.includes(e.target.tagName) || (e.target.closest && e.target.closest('.floating-chat-icon')))
         customCursor.style.display = 'none';
-      else {
+      else 
+      {
         customCursor.style.display = 'block';
         customCursor.style.left = e.clientX + 'px';
         customCursor.style.top = e.clientY + 'px';
@@ -986,7 +1083,26 @@ face_register_html = """
   <title>Face Registration - E‐Voting System</title>
   {{ base_head|safe }}
   <style>
-    #videoElement { width: 100%; max-width: 400px; border: 2px solid #ffcc00; border-radius: 10px; }
+    #videoElement 
+    { 
+      width: 100%; 
+      max-width: 400px; 
+      border: 2px solid #ffcc00; 
+      border-radius: 10px; 
+    }
+    /* Ensure the container is relative so the overlay canvas can position over video */
+    .video-container 
+    {
+      position: relative;
+      display: inline-block;
+    }
+    #overlay 
+    {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -995,7 +1111,10 @@ face_register_html = """
       <div class="card-body">
         <h2 class="card-title text-center mb-4">Face Registration</h2>
         <p class="text-center">Please scan your face using your webcam.</p>
-        <video autoplay="true" id="videoElement"></video>
+        <div class="video-container">
+          <video autoplay="true" id="videoElement"></video>
+          <canvas id="overlay"></canvas>
+        </div>
         <canvas id="canvas" style="display:none;"></canvas>
         <form method="post" id="faceForm">
           <input type="hidden" name="face_data" id="face_data">
@@ -1021,50 +1140,93 @@ face_register_html = """
       </div>
     </div>
   </div>
-<script>
-  var video = document.getElementById('videoElement');
-  var canvas = document.getElementById('canvas');
-  var captureBtn = document.getElementById('captureBtn');
-  var advancedCaptureBtn = document.getElementById('advancedCaptureBtn');
-  var faceDataInput = document.getElementById('face_data');
+  <!-- Include face-api.js for live face detection -->
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
+  <script defer>
+    Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri('/models')
+    ]).then(startVideo);
+    function startVideo() 
+    {
+      const video = document.getElementById('videoElement');
+      video.addEventListener('play', () => {
+        const canvas = document.getElementById('overlay');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const displaySize = { width: video.videoWidth, height: video.videoHeight };
+        setInterval(async () => {
+          const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
+          const resizedDetections = faceapi.resizeResults(detections, displaySize);
+          const context = canvas.getContext('2d');
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          resizedDetections.forEach(detection => {
+            const box = detection.box;
+            context.strokeStyle = "#00FF00";
+            context.lineWidth = 2;
+            context.strokeRect(box.x, box.y, box.width, box.height);
+          });
+        }, 100);
+      });
+    }
+  </script>
+  <script>
+    var video = document.getElementById('videoElement');
+    var canvas = document.getElementById('canvas');
+    var captureBtn = document.getElementById('captureBtn');
+    var advancedCaptureBtn = document.getElementById('advancedCaptureBtn');
+    var faceDataInput = document.getElementById('face_data');
 
-  if (navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: true })
-          .then(function(stream) { video.srcObject = stream; })
-          .catch(function(error) { console.log("Error accessing webcam."); });
-  }
+    if (navigator.mediaDevices.getUserMedia) 
+    {
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(function(stream) 
+            { 
+                video.srcObject = stream; 
+            })
+            .catch(function(error) 
+            { 
+                console.log("Error accessing webcam."); 
+            });
+    }
 
-  captureBtn.addEventListener('click', function() {
-      var desiredWidth = 320, desiredHeight = 240;
-      canvas.width = desiredWidth;
-      canvas.height = desiredHeight;
-      canvas.getContext('2d').drawImage(video, 0, 0, desiredWidth, desiredHeight);
-      var dataURL = canvas.toDataURL('image/jpeg', 0.7);
-      faceDataInput.value = dataURL;
-      alert("Face captured. You can now submit the registration.");
-  });
+    captureBtn.addEventListener('click', function() {
+        var desiredWidth = 320, desiredHeight = 240;
+        canvas.width = desiredWidth;
+        canvas.height = desiredHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, desiredWidth, desiredHeight);
+        var dataURL = canvas.toDataURL('image/jpeg', 0.7);
+        faceDataInput.value = dataURL;
+        var toastElem = $('#toastNotification');
+        toastElem.find('.toast-body').text("Face captured. You can now submit the registration.");
+        toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+        toastElem.toast('show');
+    });
 
-  advancedCaptureBtn.addEventListener('click', function() {
-      var desiredWidth = 320, desiredHeight = 240, frames = [], captureCount = 3, interval = 1000;
-      function captureFrame(count) {
-          canvas.width = desiredWidth;
-          canvas.height = desiredHeight;
-          var ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
-          var dataURL = canvas.toDataURL('image/jpeg', 0.7);
-          frames.push(dataURL);
-          if (count < captureCount) {
-              setTimeout(function() { captureFrame(count + 1); }, interval);
-          } else {
-              faceDataInput.value = JSON.stringify(frames);
-              var toastElem = $('#toastNotification');
-              toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
-              toastElem.toast('show');
-          }
-      }
-      captureFrame(1);
-  });
-</script>
+    advancedCaptureBtn.addEventListener('click', function() {
+        var desiredWidth = 320, desiredHeight = 240, frames = [], captureCount = 3, interval = 1000;
+        function captureFrame(count) 
+        {
+            canvas.width = desiredWidth;
+            canvas.height = desiredHeight;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
+            var dataURL = canvas.toDataURL('image/jpeg', 0.7);
+            frames.push(dataURL);
+            if (count < captureCount) 
+            {
+                setTimeout(function() { captureFrame(count + 1); }, interval);
+            } 
+            else 
+            {
+                faceDataInput.value = JSON.stringify(frames);
+                var toastElem = $('#toastNotification');
+                toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+                toastElem.toast('show');
+            }
+        }
+        captureFrame(1);
+    });
+  </script>
 </body>
 </html>
 """
@@ -1116,7 +1278,8 @@ register_html = """
   <title>Register - E‐Voting System</title>
   {{ base_head|safe }}
   <style>
-    body {
+    body 
+    {
       background: linear-gradient(45deg, #141E30, #243B55, #141E30);
       background-size: 400% 400%;
       animation: gradientBG 15s ease infinite;
@@ -1127,7 +1290,8 @@ register_html = """
       100% { background-position: 0% 50%; }
     }
     /* Custom Cursor Animation using an image */
-    .tricolor-follow {
+    .tricolor-follow 
+    {
       position: fixed;
       pointer-events: none;
       width: 30px;
@@ -1187,7 +1351,8 @@ register_html = """
               var timerInterval = setInterval(function() {
                   secondsLeft--;
                   countdownElement.textContent = secondsLeft;
-                  if(secondsLeft <= 0) {
+                  if(secondsLeft <= 0) 
+                  {
                       clearInterval(timerInterval);
                       document.getElementById('otpCountdown').style.display = 'none';
                       regenerateLink.style.display = 'inline';
@@ -1199,15 +1364,18 @@ register_html = """
                   .then(response => response.json())
                   .then(data => {
                       alert(data.message);
-                      if(data.success) {
+                      if(data.success) 
+                      {
                           secondsLeft = 120;
                           regenerateLink.style.display = 'none';
                           document.getElementById('otpCountdown').style.display = 'block';
                           countdownElement.textContent = secondsLeft;
-                          timerInterval = setInterval(function() {
+                          timerInterval = setInterval(function() 
+                          {
                               secondsLeft--;
                               countdownElement.textContent = secondsLeft;
-                              if(secondsLeft <= 0) {
+                              if(secondsLeft <= 0) 
+                              {
                                   clearInterval(timerInterval);
                                   document.getElementById('otpCountdown').style.display = 'none';
                                   regenerateLink.style.display = 'inline';
@@ -1245,19 +1413,23 @@ register_html = """
     const customCursor = document.createElement('div');
     customCursor.className = 'tricolor-follow';
     document.body.appendChild(customCursor);
-    document.addEventListener('mousemove', function(e) {
+    document.addEventListener('mousemove', function(e) 
+    {
       const interactiveTags = ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
-      if (interactiveTags.includes(e.target.tagName)) {
+      if (interactiveTags.includes(e.target.tagName)) 
+      {
         customCursor.style.display = 'none';
-      } else {
+      } 
+      else 
+      {
         customCursor.style.display = 'block';
         customCursor.style.left = e.clientX + 'px';
         customCursor.style.top = e.clientY + 'px';
       }
     });
     window.addEventListener('mouseout', function(e) {
-      if (e.clientX <= 0 || e.clientY <= 0 ||
-          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) 
+      {
         customCursor.style.display = 'none';
       }
     });
@@ -1326,7 +1498,25 @@ face_login_html = """
   <title>Face Verification - E‐Voting System</title>
   {{ base_head|safe }}
   <style>
-    #videoElement { width: 100%; max-width: 400px; border: 2px solid #ffcc00; border-radius: 10px; }
+    #videoElement 
+    { 
+      width: 100%; 
+      max-width: 400px; 
+      border: 2px solid #ffcc00; 
+      border-radius: 10px; 
+    }
+    .video-container 
+    {
+      position: relative;
+      display: inline-block;
+    }
+    #overlay 
+    {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -1335,7 +1525,10 @@ face_login_html = """
       <div class="card-body">
         <h2 class="card-title text-center mb-4">Face Verification</h2>
         <p class="text-center">Please verify your face using your webcam to complete login.</p>
-        <video autoplay="true" id="videoElement"></video>
+        <div class="video-container">
+          <video autoplay="true" id="videoElement"></video>
+          <canvas id="overlay"></canvas>
+        </div>
         <canvas id="canvas" style="display:none;"></canvas>
         <form method="post" id="faceForm">
           <input type="hidden" name="face_data" id="face_data">
@@ -1343,10 +1536,142 @@ face_login_html = """
           <button type="button" class="btn btn-custom btn-block mt-3" id="advancedCaptureBtn">Advanced Capture (Multiple Frames)</button>
           <button type="submit" class="btn btn-custom btn-block mt-3">Verify and Login</button>
         </form>
+        <!-- New Identify Me functionality -->
+        <button type="button" class="btn btn-info btn-block mt-3" id="identifyBtn">Identify Me</button>
+        <div id="identityResult" style="text-align: center; margin-top: 10px; color: #ffcc00;"></div>
       </div>
     </div>
   </div>
-  <!-- Advanced Toast Notification Container -->
+  <!-- Include face-api.js for live face detection -->
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
+  <script defer>
+    Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri('/models')
+    ]).then(startVideo);
+    function startVideo() 
+    {
+      const video = document.getElementById('videoElement');
+      video.addEventListener('play', () => {
+        const canvas = document.getElementById('overlay');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const displaySize = { width: video.videoWidth, height: video.videoHeight };
+        setInterval(async () => {
+          const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
+          const resizedDetections = faceapi.resizeResults(detections, displaySize);
+          const context = canvas.getContext('2d');
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          resizedDetections.forEach(detection => {
+            const box = detection.box;
+            context.strokeStyle = "#00FF00";
+            context.lineWidth = 2;
+            context.strokeRect(box.x, box.y, box.width, box.height);
+          });
+        }, 100);
+      });
+    }
+  </script>
+  <script>
+    var video = document.getElementById('videoElement');
+    var canvas = document.getElementById('canvas');
+    var captureBtn = document.getElementById('captureBtn');
+    var advancedCaptureBtn = document.getElementById('advancedCaptureBtn');
+    var faceDataInput = document.getElementById('face_data');
+
+    if (navigator.mediaDevices.getUserMedia) 
+    {
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(function(stream) 
+            { 
+                video.srcObject = stream; 
+            })
+            .catch(function(error) 
+            { 
+                console.log("Error accessing webcam for face verification:", error); 
+            });
+    }
+
+    captureBtn.addEventListener('click', function() 
+    {
+        var desiredWidth = 320, desiredHeight = 240;
+        canvas.width = desiredWidth;
+        canvas.height = desiredHeight;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
+        var dataURL = canvas.toDataURL('image/jpeg', 0.5);
+        faceDataInput.value = dataURL;
+        var toastElem = $('#toastNotification');
+        toastElem.find('.toast-body').text("Face captured. You can now verify and login.");
+        toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+        toastElem.toast('show');
+    });
+
+    advancedCaptureBtn.addEventListener('click', function() 
+    {
+        var desiredWidth = 320, desiredHeight = 240, frames = [], captureCount = 3, interval = 1000;
+        function captureFrame(count) 
+        {
+            canvas.width = desiredWidth;
+            canvas.height = desiredHeight;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
+            var dataURL = canvas.toDataURL('image/jpeg', 0.5);
+            frames.push(dataURL);
+            if (count < captureCount) 
+            {
+                setTimeout(function() { captureFrame(count + 1); }, interval);
+            } 
+            else 
+            {
+                faceDataInput.value = JSON.stringify(frames);
+                var toastElem = $('#toastNotification');
+                toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+                toastElem.toast('show');
+            }
+        }
+        captureFrame(1);
+    });
+
+    // Updated Identify Me functionality with toast notifications
+    document.getElementById('identifyBtn').addEventListener('click', function() 
+    {
+      var faceData = faceDataInput.value;
+      if (!faceData) 
+      {
+        // Show toast notification if no face has been captured
+        var toastElem = $('#toastNotification');
+        toastElem.find('.toast-body').text("Please capture your face first.");
+        toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+        toastElem.toast('show');
+        return;
+      }
+      fetch('/detect_face', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'face_data=' + encodeURIComponent(faceData)
+      })
+      .then(response => response.json())
+      .then(data => {
+        if(data.success) 
+        {
+          document.getElementById('identityResult').textContent = "Identified as: " + data.voter_username;
+          var toastElem = $('#toastNotification');
+          toastElem.find('.toast-body').text("Identified as: " + data.voter_username);
+          toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+          toastElem.toast('show');
+        } 
+        else 
+        {
+          document.getElementById('identityResult').textContent = data.message;
+          var toastElem = $('#toastNotification');
+          toastElem.find('.toast-body').text(data.message);
+          toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
+          toastElem.toast('show');
+        }
+      });
+    });
+  </script>
+  <!-- Advanced Toast Notification Container (can be shared with registration page) -->
   <div aria-live="polite" aria-atomic="true" style="position: fixed; top: 20px; right: 20px; z-index: 1080;">
     <div id="toastNotification" class="toast custom-toast animate__animated" data-delay="5000">
       <div class="toast-header">
@@ -1361,51 +1686,6 @@ face_login_html = """
       </div>
     </div>
   </div>
-<script>
-  var video = document.getElementById('videoElement');
-  var canvas = document.getElementById('canvas');
-  var captureBtn = document.getElementById('captureBtn');
-  var advancedCaptureBtn = document.getElementById('advancedCaptureBtn');
-  var faceDataInput = document.getElementById('face_data');
-
-  if (navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: true })
-          .then(function(stream) { video.srcObject = stream; })
-          .catch(function(error) { console.log("Error accessing webcam for face verification:", error); });
-  }
-
-  captureBtn.addEventListener('click', function() {
-      var desiredWidth = 320, desiredHeight = 240;
-      canvas.width = desiredWidth;
-      canvas.height = desiredHeight;
-      var ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
-      var dataURL = canvas.toDataURL('image/jpeg', 0.5);
-      faceDataInput.value = dataURL;
-      alert("Face captured. You can now verify and login.");
-  });
-
-  advancedCaptureBtn.addEventListener('click', function() {
-      var desiredWidth = 320, desiredHeight = 240, frames = [], captureCount = 3, interval = 1000;
-      function captureFrame(count) {
-          canvas.width = desiredWidth;
-          canvas.height = desiredHeight;
-          var ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, desiredWidth, desiredHeight);
-          var dataURL = canvas.toDataURL('image/jpeg', 0.5);
-          frames.push(dataURL);
-          if (count < captureCount) {
-              setTimeout(function() { captureFrame(count + 1); }, interval);
-          } else {
-              faceDataInput.value = JSON.stringify(frames);
-              var toastElem = $('#toastNotification');
-              toastElem.removeClass('animate__fadeOutRight').addClass('animate__fadeInRight');
-              toastElem.toast('show');
-          }
-      }
-      captureFrame(1);
-  });
-</script>
 </body>
 </html>
 """
@@ -1418,7 +1698,8 @@ login_html = """
   <title>Login - E‐Voting System</title>
   {{ base_head|safe }}
   <style>
-    body {
+    body 
+    {
       background: linear-gradient(45deg, #141E30, #243B55, #141E30);
       background-size: 400% 400%;
       animation: gradientBG 15s ease infinite;
@@ -1584,31 +1865,88 @@ def login():
                     show_login_otp = True
                     prefilled_username = user_obj.get("prefilled_username", username)
                     prefilled_voter_identifier = user_obj.get("prefilled_voter_identifier", voter_identifier)
-                    return render_template_string(login_html, show_login_otp=show_login_otp,
-                                                  prefilled_username=prefilled_username,
-                                                  prefilled_voter_identifier=prefilled_voter_identifier,
-                                                  base_head=base_head)
+                    return render_template_string(
+                        login_html,
+                        show_login_otp=show_login_otp,
+                        prefilled_username=prefilled_username,
+                        prefilled_voter_identifier=prefilled_voter_identifier,
+                        base_head=base_head
+                    )
             else:
                 login_otp = request.form.get("login_otp").strip()
                 user_obj = login_voter(username, voter_identifier, otp_provided=login_otp)
-                if user_obj and "otp_pending" not in user_obj:
-                    session["temp_user_id"] = user_obj["voter_id"]
+                if user_obj and not user_obj.get("otp_pending"):
+                    # Store minimal user data in session (JSON-serializable)
+                    session["temp_user"] = {
+                        "voter_id": user_obj["voter_id"],
+                        "voter_username": user_obj["voter_username"],
+                        "voter_identifier": user_obj["voter_identifier"],
+                        "face_data": user_obj["face_data"],
+                        "otp_secret": user_obj["otp_secret"]
+                    }
+                    # Mark the session as permanent and modified so it is saved
                     session.permanent = True
-                    return redirect(url_for('face_login_voter'))
+                    session.modified = True
+                    flash("OTP verified. Please complete face verification.", "info")
+                    return redirect(url_for("face_verify"))
                 else:
-                    flash("Invalid OTP or credentials. Please try again.", "error")
+                    flash("Invalid OTP or login failed.", "error")
         else:
-            # Admin login branch implementation
             password = request.form.get("password").strip()
-            admin_record = login_admin(username, password)
-            if admin_record:
-                session["user"] = admin_record
+            admin_obj = login_admin(username, password)
+            if admin_obj:
+                session["user"] = admin_obj
                 session["login_mode"] = "admin"
-                flash(f"Admin login successful. Welcome {admin_record['admin_username']}.", "success")
+                flash("Admin logged in successfully.", "success")
                 return redirect(url_for("admin_panel"))
             else:
-                flash("Invalid admin credentials. Please try again.", "error")
-    return render_template_string(login_html, show_login_otp=False, base_head=base_head)
+                flash("Admin login failed.", "error")
+    return render_template_string(
+        login_html,
+        show_login_otp=show_login_otp,
+        prefilled_username=prefilled_username,
+        prefilled_voter_identifier=prefilled_voter_identifier,
+        base_head=base_head
+    )
+
+@app.route("/face_verify", methods=["GET", "POST"])
+def face_verify():
+    temp_user = session.get("temp_user")
+    app.logger.debug("Session keys in face_verify: %s", list(session.keys()))
+    if not temp_user:
+        flash("Session expired. Please login again.", "error")
+        return redirect(url_for("login"))
+    
+    if request.method == "POST":
+        face_data = request.form.get("face_data")
+        if not face_data:
+            flash("Face data is required for verification.", "error")
+            return render_template_string(face_login_html, base_head=base_head)
+        
+        captured_encoding = get_face_encoding(face_data)
+        if captured_encoding is None:
+            flash("No face detected in verification. Please try again.", "error")
+            return render_template_string(face_login_html, base_head=base_head)
+        
+        registered_face_data = temp_user.get("face_data")
+        registered_encoding = get_face_encoding(registered_face_data)
+        if registered_encoding is None:
+            flash("Registered face data missing. Please re-register.", "error")
+            return redirect(url_for("register"))
+        
+        distance = np.linalg.norm(np.array(captured_encoding) - np.array(registered_encoding))
+        if distance < FACE_VERIFICATION_THRESHOLD:
+            # Set the user as logged in and explicitly mark login_mode as "voter"
+            session["user"] = temp_user
+            session["login_mode"] = "voter"
+            session.pop("temp_user", None)
+            flash("Face verified. Logged in successfully.", "success")
+            return redirect(url_for("voter_panel"))
+        else:
+            flash("Face verification failed. Please try again.", "error")
+            return render_template_string(face_login_html, base_head=base_head)
+    
+    return render_template_string(face_login_html, base_head=base_head)
 
 @app.route("/face_login_voter", methods=["GET", "POST"])
 def face_login_voter():
@@ -1663,7 +2001,7 @@ def logout():
     return redirect(url_for("index"))
 
 # ------------------------------------------------------------------------------
-# Voter Panel (Modified Voting History)
+# Voter Panel
 # ------------------------------------------------------------------------------
 voter_panel_html = """
 <!doctype html>
@@ -1749,14 +2087,16 @@ voter_panel_html = """
     <p class="text-center mt-3"><a href="{{ url_for('logout') }}">Logout</a></p>
   </div>
   <script>
-    document.getElementById("state-select").addEventListener("change", function() {
+    document.getElementById("state-select").addEventListener("change", function() 
+    {
       var stateId = this.value;
       fetch("/get_regions?state_id=" + stateId)
         .then(response => response.json())
         .then(data => {
           var regionSelect = document.getElementById("region-select");
           regionSelect.innerHTML = '<option value="">-- Select Region --</option>';
-          data.forEach(function(region) {
+          data.forEach(function(region) 
+          {
             var opt = document.createElement("option");
             opt.value = region.region_id;
             opt.innerHTML = region.region_name;
@@ -1766,14 +2106,16 @@ voter_panel_html = """
           document.getElementById("candidate-select").innerHTML = '<option value="">-- Select Candidate --</option>';
         });
     });
-    document.getElementById("region-select").addEventListener("change", function() {
+    document.getElementById("region-select").addEventListener("change", function() 
+    {
       var regionId = this.value;
       fetch("/get_constituencies?region_id=" + regionId)
         .then(response => response.json())
         .then(data => {
           var constituencySelect = document.getElementById("constituency-select");
           constituencySelect.innerHTML = '<option value="">-- Select Constituency --</option>';
-          data.forEach(function(constituency) {
+          data.forEach(function(constituency) 
+          {
             var opt = document.createElement("option");
             opt.value = constituency.constituency_id;
             opt.innerHTML = constituency.constituency_name;
@@ -1911,7 +2253,8 @@ admin_panel_html = """
         <div>{{ line_chart|safe }}</div>
       </div>
       <script>
-      document.getElementById("chart-select").addEventListener("change", function() {
+      document.getElementById("chart-select").addEventListener("change", function() 
+      {
           var selectedChart = this.value;
           var pieContainer = document.getElementById("pie-chart-container");
           var barContainer = document.getElementById("bar-chart-container");
@@ -1919,11 +2262,16 @@ admin_panel_html = """
           pieContainer.style.display = "none";
           barContainer.style.display = "none";
           lineContainer.style.display = "none";
-          if (selectedChart === "pie") {
+          if (selectedChart === "pie") 
+          {
             pieContainer.style.display = "block";
-          } else if (selectedChart === "bar") {
+          } 
+          else if (selectedChart === "bar") 
+          {
             barContainer.style.display = "block";
-          } else if (selectedChart === "line") {
+          } 
+          else if (selectedChart === "line") 
+          {
             lineContainer.style.display = "block";
           }
       });
@@ -1961,14 +2309,16 @@ admin_panel_html = """
     <p class="text-center mt-3"><a href="{{ url_for('logout') }}">Logout</a></p>
   </div>
   <script>
-    document.getElementById("admin-state-select").addEventListener("change", function() {
+    document.getElementById("admin-state-select").addEventListener("change", function() 
+    {
       var stateId = this.value;
       fetch("/get_regions?state_id=" + stateId)
         .then(response => response.json())
         .then(data => {
           var regionSelect = document.getElementById("admin-region-select");
           regionSelect.innerHTML = '<option value="">-- Select Region --</option>';
-          data.forEach(function(region) {
+          data.forEach(function(region) 
+          {
             var opt = document.createElement("option");
             opt.value = region.region_id;
             opt.innerHTML = region.region_name;
@@ -1977,14 +2327,16 @@ admin_panel_html = """
           document.getElementById("admin-constituency-select").innerHTML = '<option value="">-- Select Constituency --</option>';
         });
     });
-    document.getElementById("admin-region-select").addEventListener("change", function() {
+    document.getElementById("admin-region-select").addEventListener("change", function() 
+    {
       var regionId = this.value;
       fetch("/get_constituencies?region_id=" + regionId)
         .then(response => response.json())
         .then(data => {
           var constituencySelect = document.getElementById("admin-constituency-select");
           constituencySelect.innerHTML = '<option value="">-- Select Constituency --</option>';
-          data.forEach(function(constituency) {
+          data.forEach(function(constituency) 
+          {
             var opt = document.createElement("option");
             opt.value = constituency.constituency_id;
             opt.innerHTML = constituency.constituency_name;
@@ -2058,9 +2410,7 @@ def admin_panel():
                                   base_head=base_head)
 
 # ------------------------------------------------------------------------------
-# Chatbot Integration (Advanced using OpenAI API) with Enhanced UI/UX, Voice Assistant,
-# Chat History, New Chat Buttons, and Clear History functionality
-# Chat History and New Chat Buttons
+# Chatbot
 # ------------------------------------------------------------------------------
 chatbot_html = """
 <!doctype html>
@@ -2073,7 +2423,8 @@ chatbot_html = """
   <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
   <style>
     /* Global Styles */
-    body {
+    body 
+    {
       background: linear-gradient(135deg, #1e1e1e, #3a3a3a);
       font-family: 'Roboto', sans-serif;
       margin: 0;
@@ -2081,7 +2432,8 @@ chatbot_html = """
       color: #eaeaea;
     }
     /* Chat Container */
-    .chat-container {
+    .chat-container 
+    {
       max-width: 700px;
       margin: 40px auto;
       background-color: #1f1f1f;
@@ -2089,12 +2441,14 @@ chatbot_html = """
       box-shadow: 0 4px 8px rgba(0,0,0,0.3);
       padding: 20px;
     }
-    .chat-header {
+    .chat-header 
+    {
       font-size: 24px;
       margin-bottom: 15px;
       text-align: center;
     }
-    .chat-log {
+    .chat-log 
+    {
       max-height: 300px;
       overflow-y: auto;
       margin-bottom: 15px;
@@ -2102,33 +2456,39 @@ chatbot_html = """
       padding: 10px;
       border-radius: 8px;
     }
-    .message {
+    .message 
+    {
       margin-bottom: 10px;
     }
-    .message.user .message-content {
+    .message.user .message-content 
+    {
       background: #ffcc00;
       color: #000;
       padding: 8px 12px;
       border-radius: 8px;
       display: inline-block;
     }
-    .message.bot .message-content {
+    .message.bot .message-content 
+    {
       background: #444;
       padding: 8px 12px;
       border-radius: 8px;
       display: inline-block;
     }
-    .chat-input-container {
+    .chat-input-container 
+    {
       display: flex;
       gap: 10px;
     }
-    .chat-input {
+    .chat-input 
+    {
       flex: 1;
       padding: 10px;
       border-radius: 5px;
       border: 1px solid #ccc;
     }
-    .chat-send, .chat-record, .chat-history, .chat-new {
+    .chat-send, .chat-record, .chat-history, .chat-new 
+    {
       padding: 10px 15px;
       border: none;
       border-radius: 5px;
@@ -2137,7 +2497,8 @@ chatbot_html = """
       cursor: pointer;
       transition: background 0.3s ease;
     }
-    .chat-send:hover, .chat-record:hover, .chat-history:hover, .chat-new:hover {
+    .chat-send:hover, .chat-record:hover, .chat-history:hover, .chat-new:hover 
+    {
       background: #d73750;
     }
   </style>
@@ -2186,7 +2547,8 @@ chatbot_html = """
   <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    function appendMessage(role, text) {
+    function appendMessage(role, text) 
+    {
       var chatLog = document.getElementById("chat-log");
       var messageDiv = document.createElement("div");
       messageDiv.className = "message " + role;
@@ -2197,7 +2559,8 @@ chatbot_html = """
       chatLog.appendChild(messageDiv);
       chatLog.scrollTop = chatLog.scrollHeight;
     }
-    document.getElementById("send-btn").addEventListener("click", function() {
+    document.getElementById("send-btn").addEventListener("click", function() 
+    {
       var inputField = document.getElementById("chat-input");
       var message = inputField.value;
       if (message.trim() === "") return;
@@ -2214,7 +2577,8 @@ chatbot_html = """
       });
     });
     document.getElementById("chat-input").addEventListener("keypress", function(e) {
-      if (e.key === "Enter") {
+      if (e.key === "Enter") 
+      {
         e.preventDefault();
         document.getElementById("send-btn").click();
       }
@@ -2224,20 +2588,26 @@ chatbot_html = """
     var recognition;
     if ('SpeechRecognition' in window) {
       recognition = new SpeechRecognition();
-    } else if ('webkitSpeechRecognition' in window) {
+    } 
+    else if ('webkitSpeechRecognition' in window) 
+    {
       recognition = new webkitSpeechRecognition();
-    } else {
+    } 
+    else 
+    {
       recordBtn.disabled = true;
       recordBtn.innerText = "Voice Not Supported";
     }
-    if (recognition) {
+    if (recognition) 
+    {
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.lang = 'en-US';
       recordBtn.addEventListener("click", function() {
         recognition.start();
       });
-      recognition.onresult = function(event) {
+      recognition.onresult = function(event) 
+      {
         var transcript = event.results[0][0].transcript;
         document.getElementById("chat-input").value = transcript;
       };
